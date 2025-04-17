@@ -1,0 +1,63 @@
+VERSION											:= 0.0.0
+COVERAGE_DIR								:= ./target
+PACKAGES										= ./...
+GOPATH											:= $(shell go env GOPATH)
+GOOS												:= $(shell go env GOOS)
+TARGET_DIR									:= target
+SHA1												:= $(shell git rev-parse --short HEAD)
+
+init:
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.63.4
+
+lint: init
+	$(GOPATH)/bin/golangci-lint run ./...
+
+generate:
+	go generate $(PACKAGES)
+
+format:
+	go fmt $(PACKAGES)
+
+clean:
+	@echo "Cleaning $(TARGET_DIR)/"
+	@rm -rf $(TARGET_DIR)
+	go mod tidy
+
+test:
+	go test -coverprofile=$(COVERAGE_DIR)/coverage.out $(PACKAGES)
+	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+
+verify:
+	go mod verify
+	go vet -all $(PACKAGES)
+
+compile:
+	go build $(PACKAGES)
+
+build-init:
+	mkdir -p $(TARGET_DIR)/builds
+
+build: clean build-init verify compile test
+	for GOOS in darwin linux windows; do \
+		echo $(GOOS) ; \
+		mkdir -p $(TARGET_DIR)/builds/$$GOOS ; \
+		GOOS=$$GOOS CGO_ENABLED=0 go build -a -installsuffix cgo \
+			-ldflags " \
+    		-X github.com/quike/$(COMPONENT)/cmd.CLIVersion=$(VERSION) \
+    		-X github.com/quike/$(COMPONENT)/cmd.CLISha=$(SHA1) \
+    		-X github.com/quike/$(COMPONENT)/cmd.CLIOs=$$GOOS" \
+		  -v -o target/builds/$$GOOS/$(COMPONENT) ; \
+	done
+	chmod -R 755 $(TARGET_DIR)/builds
+
+build-init-test:
+	for GOOS in darwin linux windows; do \
+		mkdir -p $(TARGET_DIR)/builds/$$GOOS ;\
+	done
+
+run-integration-tests:
+	cd integration-tests && ./run.sh
+
+tunnel:
+	 npm install -g localtunnel
+	 lt --port 3000

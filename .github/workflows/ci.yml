@@ -1,0 +1,34 @@
+name: Push
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions: read-all
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: quike/workflow-github/.github/workflows/release.yml@v1
+    secrets: inherit
+
+  build:
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "^1.24.1"
+      - run: make build
+      - uses: codecov/codecov-action@v5
+        with:
+          files: target/coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}

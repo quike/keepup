@@ -1,0 +1,43 @@
+version: 1
+
+settings:
+  logging:
+    level: debug
+    pretty: true # set to true for human-readable logs
+  working-dir: /tmp # optional default directory to run commands
+  max-concurrency: 2 # max 2 parallel programs at any time
+
+env:
+  WHATEVER: "global value"
+
+groups:
+  - name: global-env
+    description: "This runs program 1"
+    command: "echo $WHATEVER"
+    params: ["--flag1", "value1"]
+
+  - name: scoped-env
+    description: "Runs program 2 with something"
+    command: "echo $WHATEVER"
+    params: ["--config", "/etc/prog2.yaml"]
+    env:
+      WHATEVER: "scoped value"
+
+  - name: combined-responses
+    description: "Program 3 needs output from Program 2"
+    command: "echo"
+    params: ["combined: {{ output.global-env }} + {{ output.scoped-env }}"]
+
+  - name: token-gen
+    command: "echo"
+    params: ["abc123"]
+
+  - name: use-token
+    command: "curl"
+    params:
+      - "-H"
+      - "Authorization: Bearer {{ output.token-gen }}"
+
+execution:
+  - group: ["global-env", "scoped-env", "token-gen"] # these run concurrently
+  - group: ["combined-responses", "use-token"] # runs after previous group execution

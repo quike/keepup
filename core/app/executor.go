@@ -17,20 +17,20 @@ import (
 
 type Executor struct {
 	// mutex   sync.Mutex
-	Groups  map[string]config.Group
+	Groups  *sync.Map
 	Config  config.Config
-	Outputs map[string]string // program name -> output
+	Outputs sync.Map // program name -> output
 }
 
 func NewExecutor(cfg config.Config) *Executor {
-	groupMap := make(map[string]config.Group)
+	groupMap := &sync.Map{}
 	for _, g := range cfg.Groups {
-		groupMap[g.Name] = g
+		groupMap.Store(g.Name, g)
 	}
 	return &Executor{
 		Groups:  groupMap,
 		Config:  cfg,
-		Outputs: make(map[string]string),
+		Outputs: sync.Map{},
 	}
 }
 
@@ -42,7 +42,7 @@ func (e *Executor) Run() error {
 		errs := make(chan error, len(step.Group))
 
 		for _, groupName := range step.Group {
-			group, ok := e.Groups[groupName]
+			group, ok := e.Groups.Load(groupName)
 			if !ok {
 				return fmt.Errorf("group %s not defined", groupName)
 			}
@@ -54,7 +54,7 @@ func (e *Executor) Run() error {
 				if err != nil {
 					errs <- fmt.Errorf("group %s failed: %w", g.Name, err)
 				}
-			}(group)
+			}(group.(config.Group))
 		}
 
 		wg.Wait()
@@ -114,16 +114,17 @@ func (e *Executor) runGroup(group config.Group) error {
 	}
 
 	logger.GetLogger().Trace().Msgf("Output from %s: %s", group.Name, output.String())
-	e.Outputs[group.Name] = output.String()
+	e.Outputs.Store(group.Name, output.String())
 
 	return nil
 }
 
 func (e *Executor) expandParams(param string) string {
-	for key, val := range e.Outputs {
-		placeholder := fmt.Sprintf("{{ output.%s }}", key)
-		param = strings.ReplaceAll(param, placeholder, strings.TrimSpace(val))
-	}
+	e.Outputs.Range(func(key, value interface{}) bool {
+		placeholder := fmt.Sprintf("{{ output.%s }}", key.(string))
+		param = strings.ReplaceAll(param, placeholder, strings.TrimSpace(value.(string)))
+		return true
+	})
 	return param
 }
 

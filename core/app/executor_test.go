@@ -26,8 +26,10 @@ func TestExecutor_Run_Success(t *testing.T) {
 
 	// Assertions
 	assert.NoError(t, err)
-	assert.Equal(t, "Hello\n", executor.Outputs["group1"])
-	assert.Equal(t, "World\n", executor.Outputs["group2"])
+	value, _ := executor.Outputs.Load("group1")
+	assert.Equal(t, "Hello\n", value)
+	value, _ = executor.Outputs.Load("group2")
+	assert.Equal(t, "World\n", value)
 }
 
 func TestExecutor_Run_GroupNotDefined(t *testing.T) {
@@ -91,6 +93,8 @@ func TestExecutor_ExpandParams(t *testing.T) {
 
 	// Assertions
 	assert.NoError(t, err)
-	assert.Equal(t, "World\n", executor.Outputs["group2"])
-	assert.Equal(t, "{{ output.group2 }}\n", executor.Outputs["group1"])
+	value, _ := executor.Outputs.Load("group2")
+	assert.Equal(t, "World\n", value)
+	value, _ = executor.Outputs.Load("group1")
+	assert.Equal(t, "{{ output.group2 }}\n", value)
 }

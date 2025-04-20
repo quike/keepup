@@ -24,7 +24,7 @@ clean:
 	go mod tidy
 
 test:
-	go test -coverprofile=$(COVERAGE_DIR)/coverage.out $(PACKAGES)
+	go test -race -coverprofile=$(COVERAGE_DIR)/coverage.out $(PACKAGES)
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 verify:

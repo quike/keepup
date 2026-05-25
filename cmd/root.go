@@ -4,14 +4,26 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"github.com/quike/keepup/internal/app"
 
-	"github.com/quike/keepup/core/app"
-	"github.com/quike/keepup/core/config"
+	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/logger"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+type executorLogger struct {
+	*zerolog.Logger
+}
+
+func (l *executorLogger) Info() app.LogEvent  { return l.Logger.Info() }
+func (l *executorLogger) Error() app.LogEvent { return l.Logger.Error() }
+func (l *executorLogger) Trace() app.LogEvent { return l.Logger.Trace() }
+func (l *executorLogger) Warn() app.LogEvent  { return l.Logger.Warn() }
 
 const (
 	appName = "keepup"
@@ -53,16 +65,25 @@ var rootCmd = &cobra.Command{
 		if verbose {
 			showConfig(*cfg)
 		}
+		logger.GetLogger().Info().Msgf("Config file found at: %v", configFile)
 		if err := validateGroupParam(cfg, groupName); err != nil {
 			return err
 		}
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		executor := app.NewExecutor(*cfg)
+		executor := app.NewExecutor(*cfg, &executorLogger{logger.GetLogger()})
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			logger.GetLogger().Info().Msg("Shutting down...")
+			executor.Cancel()
+		}()
 		if err := executor.Run(); err != nil {
 			logger.GetLogger().Error().Msgf("Execution failed: %v", err)
 		}
+		signal.Stop(sigCh)
 	},
 }
 
@@ -74,23 +95,19 @@ func Execute() {
 }
 
 func defaultConfig() string {
-	// Expand ~ to home dir
 	home, err := os.UserHomeDir()
 	if err != nil {
-		logger.GetLogger().Error().Msgf("Cannot determine home dir: %v", err)
+		return ""
 	}
-	defaultConfig := filepath.Join(home, ".config", appName, appName+".yml")
-	return defaultConfig
+	return filepath.Join(home, ".config", appName, appName+".yml")
 }
 
-func showConfig(cfg config.Config) error {
+func showConfig(cfg config.Config) {
 	pretty, err := yaml.Marshal(cfg)
 	if err != nil {
 		panic(err)
 	}
-	logger.GetLogger().Info().Msgf("Config file found at: %v", configFile)
 	fmt.Println(string(pretty))
-	return nil
 }
 
 func validateGroupParam(cfg *config.Config, groupName string) error {

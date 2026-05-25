@@ -23,7 +23,7 @@ type Logging struct {
 }
 
 type Settings struct {
-	dryRun     bool    `yaml:"dry-un"`
+	DryRun     bool    `yaml:"dry-run"`
 	Logging    Logging `yaml:"logging"`
 	WorkingDir string  `yaml:"working-dir"`
 }

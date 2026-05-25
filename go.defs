@@ -55,9 +55,4 @@ build-init-test:
 		mkdir -p $(TARGET_DIR)/builds/$$GOOS ;\
 	done
 
-run-integration-tests:
-	cd integration-tests && ./run.sh
 
-tunnel:
-	 npm install -g localtunnel
-	 lt --port 3000

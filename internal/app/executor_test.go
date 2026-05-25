@@ -3,9 +3,20 @@ package app
 import (
 	"testing"
 
-	"github.com/quike/keepup/core/config"
+	"github.com/quike/keepup/internal/config"
 	"github.com/stretchr/testify/assert"
 )
+
+type testLogger struct{}
+
+func (l *testLogger) Info() LogEvent  { return &testLogEvent{} }
+func (l *testLogger) Error() LogEvent { return &testLogEvent{} }
+func (l *testLogger) Trace() LogEvent { return &testLogEvent{} }
+func (l *testLogger) Warn() LogEvent  { return &testLogEvent{} }
+
+type testLogEvent struct{}
+
+func (e *testLogEvent) Msgf(format string, v ...interface{}) {}
 
 func TestExecutor_Run_Success(t *testing.T) {
 	// Mock configuration
@@ -19,12 +30,10 @@ func TestExecutor_Run_Success(t *testing.T) {
 		},
 	}
 
-	executor := NewExecutor(cfg)
+	executor := NewExecutor(cfg, &testLogger{})
 
-	// Run the executor
 	err := executor.Run()
 
-	// Assertions
 	assert.NoError(t, err)
 	value, _ := executor.Outputs.Load("group1")
 	assert.Equal(t, "Hello\n", value)
@@ -43,12 +52,10 @@ func TestExecutor_Run_GroupNotDefined(t *testing.T) {
 		},
 	}
 
-	executor := NewExecutor(cfg)
+	executor := NewExecutor(cfg, &testLogger{})
 
-	// Run the executor
 	err := executor.Run()
 
-	// Assertions
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "group group2 not defined")
 }
@@ -64,12 +71,10 @@ func TestExecutor_Run_CommandFails(t *testing.T) {
 		},
 	}
 
-	executor := NewExecutor(cfg)
+	executor := NewExecutor(cfg, &testLogger{})
 
-	// Run the executor
 	err := executor.Run()
 
-	// Assertions
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "step 1 failed")
 }
@@ -86,12 +91,10 @@ func TestExecutor_ExpandParams(t *testing.T) {
 		},
 	}
 
-	executor := NewExecutor(cfg)
+	executor := NewExecutor(cfg, &testLogger{})
 
-	// Run the executor
 	err := executor.Run()
 
-	// Assertions
 	assert.NoError(t, err)
 	value, _ := executor.Outputs.Load("group2")
 	assert.Equal(t, "World\n", value)

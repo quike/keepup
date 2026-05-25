@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,44 +13,76 @@ import (
 	"maps"
 
 	"github.com/quike/keepup/core/config"
-	"github.com/quike/keepup/logger"
 )
 
-type Executor struct {
-	// mutex   sync.Mutex
-	Groups  *sync.Map
-	Config  config.Config
-	Outputs sync.Map // program name -> output
+type Logger interface {
+	Info() LogEvent
+	Error() LogEvent
+	Trace() LogEvent
+	Warn() LogEvent
 }
 
-func NewExecutor(cfg config.Config) *Executor {
+type LogEvent interface {
+	Msgf(format string, v ...interface{})
+}
+
+type Executor struct {
+	groups  *sync.Map
+	Config  config.Config
+	Outputs sync.Map
+	log     Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func NewExecutor(cfg config.Config, log Logger) *Executor {
 	groupMap := &sync.Map{}
 	for _, g := range cfg.Groups {
 		groupMap.Store(g.Name, g)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Executor{
-		Groups:  groupMap,
+		groups:  groupMap,
 		Config:  cfg,
 		Outputs: sync.Map{},
+		log:     log,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
+}
+
+func (e *Executor) Cancel() {
+	e.cancel()
 }
 
 func (e *Executor) Run() error {
 	for stepIndex, step := range e.Config.Execution {
-		logger.GetLogger().Info().Msgf("Starting step %d: %v", stepIndex+1, step.Group)
+		select {
+		case <-e.ctx.Done():
+			return e.ctx.Err()
+		default:
+		}
+
+		e.log.Info().Msgf("Starting step %d: %v", stepIndex+1, step.Group)
 
 		var wg sync.WaitGroup
 		errs := make(chan error, len(step.Group))
 
+		sem := make(chan struct{}, e.semaphoreSize(step))
+
 		for _, groupName := range step.Group {
-			group, ok := e.Groups.Load(groupName)
+			group, ok := e.groups.Load(groupName)
 			if !ok {
 				return fmt.Errorf("group %s not defined", groupName)
 			}
 
+			sem <- struct{}{}
 			wg.Add(1)
 			go func(g config.Group) {
-				defer wg.Done()
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
 				err := e.runGroup(g)
 				if err != nil {
 					errs <- fmt.Errorf("group %s failed: %w", g.Name, err)
@@ -62,58 +95,75 @@ func (e *Executor) Run() error {
 
 		if len(errs) > 0 {
 			for err := range errs {
-				logger.GetLogger().Error().Msgf("Error: %s", err)
+				e.log.Error().Msgf("Error: %s", err)
 			}
 			return fmt.Errorf("step %d failed", stepIndex+1)
 		}
-		logger.GetLogger().Info().Msgf("Step %d completed successfully", stepIndex+1)
+		e.log.Info().Msgf("Step %d completed successfully", stepIndex+1)
 	}
 
 	return nil
 }
 
+func (e *Executor) semaphoreSize(step config.Step) int {
+	max := 0
+	for _, name := range step.Group {
+		if g, ok := e.groups.Load(name); ok {
+			group := g.(config.Group)
+			if group.Concurrency != nil {
+				switch v := group.Concurrency.(type) {
+				case int:
+					if v > max {
+						max = v
+					}
+				}
+			}
+		}
+	}
+	if max > 0 {
+		return max
+	}
+	return len(step.Group)
+}
+
 func (e *Executor) runGroup(group config.Group) error {
-
-	// e.mutex.Lock()
-	// defer e.mutex.Unlock()
-
 	shell := group.Shell
 	if shell == "" {
 		shell = getDefaultShell()
 	}
 
-	// Expand parameters
 	expandedParams := make([]string, len(group.Params))
 	for i, param := range group.Params {
 		expandedParams[i] = e.expandParams(param)
 	}
 
-	// Build final command line string
 	fullCmd := fmt.Sprintf("%s %s", group.Command, strings.Join(expandedParams, " "))
 
-	cmd := exec.Command(shell, "-c", fullCmd)
+	cmd := exec.CommandContext(e.ctx, shell, "-c", fullCmd)
 
 	cmd.Env = mergeEnvs(
-		os.Environ(), // base env
-		e.Config.Env, // global env (e.Config.Env)
-		group.Env,    // group-specific env (this is g.Env)
+		os.Environ(),
+		e.Config.Env,
+		group.Env,
 	)
 
+	if e.Config.Settings.WorkingDir != "" {
+		cmd.Dir = e.Config.Settings.WorkingDir
+	}
+
 	var output bytes.Buffer
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 
-	logger.GetLogger().Info().Msgf("Running group %s: command %s %v", group.Name, group.Command, expandedParams)
+	e.log.Info().Msgf("Running group %s: command %s %v", group.Name, group.Command, expandedParams)
 
 	if err := cmd.Run(); err != nil {
-		logger.GetLogger().Error().Msgf("Error running %s: %s", group.Name, err)
-		logger.GetLogger().Info().Msgf("Output from %s: %s", group.Name, output.String())
+		e.log.Error().Msgf("Error running %s: %s", group.Name, err)
+		e.log.Info().Msgf("Output from %s: %s", group.Name, output.String())
 		return err
 	}
 
-	logger.GetLogger().Trace().Msgf("Output from %s: %s", group.Name, output.String())
+	e.log.Trace().Msgf("Output from %s: %s", group.Name, output.String())
 	e.Outputs.Store(group.Name, output.String())
 
 	return nil
@@ -131,7 +181,7 @@ func (e *Executor) expandParams(param string) string {
 func getDefaultShell() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		shell = "/bin/sh" // Fallback to /bin/sh if SHELL env var is not set
+		shell = "/bin/sh"
 	}
 	return shell
 }
@@ -139,7 +189,6 @@ func getDefaultShell() string {
 func mergeEnvs(base []string, overrides ...map[string]string) []string {
 	result := map[string]string{}
 
-	// Convert base []string to map
 	for _, raw := range base {
 		parts := strings.SplitN(raw, "=", 2)
 		if len(parts) == 2 {
@@ -147,12 +196,10 @@ func mergeEnvs(base []string, overrides ...map[string]string) []string {
 		}
 	}
 
-	// Apply overrides in order
 	for _, layer := range overrides {
 		maps.Copy(result, layer)
 	}
 
-	// Convert back to []string
 	final := make([]string, 0, len(result))
 	for k, v := range result {
 		final = append(final, fmt.Sprintf("%s=%s", k, v))

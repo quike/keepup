@@ -12,7 +12,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/engine"

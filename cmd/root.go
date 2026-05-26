@@ -75,6 +75,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "Verbose output")
 
 	root.AddCommand(newRunCmd(opts))
+	root.AddCommand(newWatchCmd(opts, stdout))
 	root.AddCommand(newListCmd(opts, stdout))
 	root.AddCommand(newValidateCmd(opts, stdout))
 	root.AddCommand(newGraphCmd(opts, stdout))

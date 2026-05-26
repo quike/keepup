@@ -53,6 +53,7 @@ flows:
 ```sh
 keepup run                # run the default flow
 keepup run <flow>         # run a specific flow
+keepup watch [flow]       # re-run a flow when its cache.reads inputs change
 keepup list               # list flows (default starred)
 keepup list groups        # list groups
 keepup validate           # parse & reference-check; no execution
@@ -65,6 +66,33 @@ Common flags:
 - `-c, --config <path>` — point at a config file
 - `-d, --dry-run` — log what would run; never invoke the runner
 - `-v, --verbose` — dump the parsed config before running
+- `--no-cache` (run only) — ignore cached results and run every group
+
+## Watch mode
+
+`keepup watch` turns the inner loop into a live one. It watches the files
+declared in the `cache.reads` of the flow's groups and re-runs the flow on
+each change; caching ensures only the affected groups actually execute.
+
+```yaml
+groups:
+  - name: build
+    command: go
+    params: [build, ./...]
+    cache:
+      reads: ["**/*.go", "go.mod"]
+flows:
+  dev:
+    steps:
+      - run: [build]
+```
+
+```sh
+keepup watch dev   # build now, then rebuild on every .go change; Ctrl-C to stop
+```
+
+The flow needs at least one group with a `cache.reads` block — that's the
+watch set.
 
 ## Multiple flows over the same groups
 

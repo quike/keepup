@@ -1,0 +1,57 @@
+---
+# A watch/cache-oriented config used by tests to exercise `keepup watch` and
+# per-group caching against a realistic shape: groups declare cache.reads so
+# the watch set can be derived, and one group references another's output.
+version: 2
+
+settings:
+  logging:
+    level: info
+    pretty: true
+  cache-dir: .keepup-cache
+  max-concurrency: 4
+
+groups:
+  - name: generate
+    description: "Code generation step"
+    command: echo
+    params: ["generated"]
+    cache:
+      method: hash
+      reads: ["proto/**/*.proto"]
+      writes: ["internal/pb/**/*.go"]
+
+  - name: build
+    description: "Compile the binary"
+    command: echo
+    params: ["built {{ output.generate }}"]
+    require: "command -v echo"
+    cache:
+      method: hash
+      reads: ["**/*.go", "go.mod", "go.sum"]
+      writes: ["bin/app"]
+
+  - name: test
+    description: "Run the test suite"
+    command: echo
+    params: ["tested"]
+    skip-if: "false"
+    cache:
+      method: mtime
+      reads: ["**/*.go"]
+
+default: dev
+
+flows:
+  dev:
+    description: "Generate → build → test, step mode (watch target)"
+    mode: step
+    steps:
+      - run: [generate]
+      - run: [build]
+      - run: [test]
+
+  dev-dag:
+    description: "Same groups scheduled by data deps"
+    mode: dag
+    run: [generate, build, test]

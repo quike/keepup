@@ -166,6 +166,20 @@ func TestLoadConfig(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_HomeExpansionWithMissingHomeFails(t *testing.T) {
+	// Clear HOME/USERPROFILE so os.UserHomeDir cannot resolve a directory.
+	// On Unix this makes UserHomeDir return an error, exercising the
+	// expandHome error path.
+	if home := os.Getenv("HOME"); home == "" {
+		t.Skip("HOME not normally set on this platform")
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	_, err := LoadConfig("~/whatever.yaml")
+	require.Error(t, err)
+}
+
 func TestGroup_UseShell(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/quike/keepup/internal/config"
 )
 
 const minimalCfg = `
@@ -145,4 +147,33 @@ func TestExecute_BadFlagReturnsNonZero(t *testing.T) {
 	os.Args = []string{"keepup", "--config", "/no/such/path/keepup.yml"}
 	code := Execute()
 	assert.Equal(t, 1, code)
+}
+
+func TestLoad_DefaultsToHomeConfigPath(t *testing.T) {
+	// No --config flag → load() must call defaultConfigPath. Point HOME at a
+	// temp dir that lacks the default file so we get a controlled error from
+	// LoadConfig, but the default-path branch is exercised.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load configuration")
+}
+
+// failingWriter returns an error on every Write so we can exercise the
+// dumpConfig error path.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, assert.AnError }
+
+func TestDumpConfig_PropagatesWriteError(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Version: 1}
+	err := dumpConfig(failingWriter{}, "/tmp/keepup.yml", cfg)
+	require.Error(t, err)
 }

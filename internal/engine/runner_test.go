@@ -81,6 +81,33 @@ func TestShellRunner_ShellModeOptIn(t *testing.T) {
 	assert.Equal(t, "3\n", strings.TrimLeft(out, " "))
 }
 
+func TestShellRunner_ShellModeWithParams(t *testing.T) {
+	skipOnWindows(t)
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	r := &ShellRunner{Stdout: &stdout, Stderr: &stderr}
+	// With shell mode AND params, the runner joins command+params and passes
+	// the result to "sh -c". This exercises the params-join branch.
+	out, err := r.Run(context.Background(),
+		&config.Group{Name: "g", Command: "echo", Shell: "/bin/sh"},
+		[]string{"hello", "world"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world\n", out)
+}
+
+func TestShellRunner_NilWritersFallbackToProcessStdio(t *testing.T) {
+	skipOnWindows(t)
+	t.Parallel()
+	// Constructing ShellRunner with zero-value writers must not panic — it
+	// should silently fall back to os.Stdout/os.Stderr. We exercise the path
+	// without asserting on the process stdio.
+	r := &ShellRunner{} // Stdout and Stderr are both nil
+	out, err := r.Run(context.Background(),
+		&config.Group{Name: "g", Command: "echo"}, []string{"x"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "x\n", out)
+}
+
 func TestShellRunner_FailingCommand(t *testing.T) {
 	skipOnWindows(t)
 	t.Parallel()

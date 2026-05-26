@@ -2,58 +2,87 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRootCmd_Execute(t *testing.T) {
-	t.Cleanup(resetRootCmdState)
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetArgs([]string{"--help"})
+const minimalCfg = `
+version: 1
+settings:
+  logging:
+    level: warn
+groups:
+  - name: echo
+    command: echo
+    params: ["hello"]
+execution:
+  - group: ["echo"]
+`
 
-	_ = rootCmd.Execute()
-
-	actualOutput := output.String()
-	assert.Contains(t, actualOutput, "Keepup is a task runner that executes tasks based on")
+func TestRootCmd_Help(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--help"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "Keepup is a task runner")
 }
 
-func TestRootCmd_PreRunE(t *testing.T) {
-	t.Cleanup(resetRootCmdState)
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetArgs([]string{"--config", "nonexistent.yml"})
-
-	err := rootCmd.Execute()
-	assert.Error(t, err, "unable to load configuration file")
+func TestRootCmd_MissingConfig(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", "nonexistent.yml"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load configuration")
 }
 
-func TestRootCmd_ValidateGroupParam(t *testing.T) {
-	t.Cleanup(resetRootCmdState)
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetArgs([]string{"--group", "nonexistent-group"})
-
-	err := rootCmd.Execute()
-	assert.Error(t, err, "group 'nonexistent-group' not found in config")
+func TestRootCmd_GroupNotFound(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", cfgPath, "--group", "does-not-exist"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `group "does-not-exist" not found`)
 }
 
-// Cobra commands are mutable, and since rootCmd is a shared global, tests that mutate it
-// (e.g., setting args, flags, or outputs) will affect other tests if you don’t reset it between tests
-func resetRootCmdState() {
-	rootCmd.SetArgs(nil)
-	rootCmd.SetOut(nil)
-	rootCmd.SetErr(nil)
-	rootCmd.SilenceErrors = false
-	rootCmd.SilenceUsage = false
+func TestRootCmd_DryRunHonored(t *testing.T) {
+	t.Parallel()
+	// A command that would fail if actually executed; dry-run must skip it.
+	cfg := `
+groups:
+  - name: g
+    command: this-does-not-exist
+execution:
+  - group: ["g"]
+`
+	cfgPath := writeTempConfig(t, cfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", cfgPath, "--dry-run"})
+	require.NoError(t, cmd.Execute())
+}
 
-	// Reset all flags
-	rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
-	})
-	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
-	})
+func TestRootCmd_VerboseDumpsConfig(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", cfgPath, "--dry-run", "--verbose"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "# config:")
+}
+
+func writeTempConfig(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "keepup.yml")
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	return p
 }

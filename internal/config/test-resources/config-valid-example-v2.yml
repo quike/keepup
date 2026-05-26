@@ -1,5 +1,5 @@
 ---
-# Migrated equivalent of keepup-v1.yml in the same directory.
+# Migrated equivalent of config-valid-example-v1.yml in the same directory.
 #
 # Key differences:
 #   - version: 1 → version: 2

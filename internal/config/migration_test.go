@@ -9,21 +9,22 @@ import (
 
 // TestMigration_V1RejectedV2Accepted pins the documented compatibility story:
 // the v1 schema is intentionally rejected with a clear error, and the v2
-// migration of the same content validates fully. The two fixtures in
-// test-resources/migration/ are kept as a side-by-side reference for users
+// migration of the same content validates fully. The
+// `config-valid-example-v1.yml` / `config-valid-example-v2.yml` fixtures
+// stay alongside each other as a side-by-side reference for users
 // migrating their own files.
 func TestMigration_V1RejectedV2Accepted(t *testing.T) {
 	t.Parallel()
 
 	t.Run("v1 is rejected by design", func(t *testing.T) {
-		_, err := LoadConfig("./test-resources/migration/keepup-v1.yml")
+		_, err := LoadConfig("./test-resources/config-valid-example-v1.yml")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported schema version 1",
 			"v1 must surface an explicit schema-version error so users know how to migrate")
 	})
 
 	t.Run("v2 migration of the same content validates", func(t *testing.T) {
-		cfg, err := LoadConfig("./test-resources/migration/keepup-v2.yml")
+		cfg, err := LoadConfig("./test-resources/config-valid-example-v2.yml")
 		require.NoError(t, err)
 		assert.Equal(t, 2, cfg.Version)
 

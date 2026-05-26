@@ -265,6 +265,33 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, ModeDAG, cfg.Flows["pipeline-dag"].Mode)
 	})
 
+	t.Run("watch/cache resource file parses", func(t *testing.T) {
+		cfg, err := LoadConfig("./test-resources/config-watch.yml")
+		require.NoError(t, err)
+		assert.Equal(t, ".keepup-cache", cfg.Settings.CacheDir)
+		require.Len(t, cfg.Groups, 3)
+
+		gen := cfg.GroupByName("generate")
+		require.NotNil(t, gen)
+		require.NotNil(t, gen.Cache)
+		assert.Equal(t, CacheHash, gen.Cache.Method)
+		assert.Equal(t, []string{"proto/**/*.proto"}, gen.Cache.Reads)
+		assert.Equal(t, []string{"internal/pb/**/*.go"}, gen.Cache.Writes)
+
+		build := cfg.GroupByName("build")
+		require.NotNil(t, build)
+		assert.Equal(t, "command -v echo", build.Require)
+
+		test := cfg.GroupByName("test")
+		require.NotNil(t, test)
+		assert.Equal(t, "false", test.SkipIf)
+		assert.Equal(t, CacheMtime, test.Cache.Method)
+
+		require.Contains(t, cfg.Flows, "dev")
+		require.Contains(t, cfg.Flows, "dev-dag")
+		assert.Equal(t, "dev", cfg.Default)
+	})
+
 	t.Run("file not found", func(t *testing.T) {
 		_, err := LoadConfig("nonexistent.yaml")
 		require.Error(t, err)

@@ -299,6 +299,7 @@ keepup list                  # show declared flows + descriptions
 keepup list groups           # show declared groups
 keepup validate              # parse + validate; no execution
 keepup graph [flow]          # emit a Mermaid diagram of the data DAG
+keepup migrate <path>        # convert a legacy v1 file to v2
 keepup version
 ```
 

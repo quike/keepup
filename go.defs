@@ -3,11 +3,12 @@ COVERAGE_DIR								:= ./target
 PACKAGES										= ./...
 GOPATH											:= $(shell go env GOPATH)
 GOOS												:= $(shell go env GOOS)
+GOARCH											:= $(shell go env GOARCH)
 TARGET_DIR									:= target
 SHA1												:= $(shell git rev-parse --short HEAD)
 
 init:
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.63.4
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
 lint: init
 	$(GOPATH)/bin/golangci-lint run ./...
@@ -39,20 +40,37 @@ build-init:
 
 build: clean build-init verify compile test
 	for GOOS in darwin linux windows; do \
-		echo $(GOOS) ; \
-		mkdir -p $(TARGET_DIR)/builds/$$GOOS ; \
-		GOOS=$$GOOS CGO_ENABLED=0 go build -a -installsuffix cgo \
-			-ldflags " \
+		for GOARCH in amd64 arm64; do \
+			echo $$GOOS/$$GOARCH ; \
+			mkdir -p $(TARGET_DIR)/builds/$$GOOS/$$GOARCH ; \
+			GOOS=$$GOOS GOARCH=$$GOARCH CGO_ENABLED=0 go build -a -installsuffix cgo \
+				-ldflags " \
+	    		-X github.com/quike/$(COMPONENT)/cmd.CLIVersion=$(VERSION) \
+	    		-X github.com/quike/$(COMPONENT)/cmd.CLISha=$(SHA1) \
+	    		-X github.com/quike/$(COMPONENT)/cmd.CLIOs=$$GOOS \
+	    		-X github.com/quike/$(COMPONENT)/cmd.CLIArch=$$GOARCH" \
+			  -v -o target/builds/$$GOOS/$$GOARCH/$(COMPONENT) ; \
+		done ; \
+	done
+	chmod -R 755 $(TARGET_DIR)/builds
+
+build-local: build-init verify compile test
+	@echo "Building only for $(GOOS)/$(GOARCH)"
+	mkdir -p $(TARGET_DIR)/builds/$(GOOS)/$(GOARCH)
+	CGO_ENABLED=0 go build \
+		-ldflags " \
     		-X github.com/quike/$(COMPONENT)/cmd.CLIVersion=$(VERSION) \
     		-X github.com/quike/$(COMPONENT)/cmd.CLISha=$(SHA1) \
-    		-X github.com/quike/$(COMPONENT)/cmd.CLIOs=$$GOOS" \
-		  -v -o target/builds/$$GOOS/$(COMPONENT) ; \
-	done
+    		-X github.com/quike/$(COMPONENT)/cmd.CLIOs=$(GOOS) \
+    		-X github.com/quike/$(COMPONENT)/cmd.CLIArch=$(GOARCH)" \
+	  -v -o $(TARGET_DIR)/builds/$(GOOS)/$(GOARCH)/$(COMPONENT)
 	chmod -R 755 $(TARGET_DIR)/builds
 
 build-init-test:
 	for GOOS in darwin linux windows; do \
-		mkdir -p $(TARGET_DIR)/builds/$$GOOS ;\
+		for GOARCH in amd64 arm64; do \
+			mkdir -p $(TARGET_DIR)/builds/$$GOOS/$$GOARCH ;\
+		done ; \
 	done
 
 run-integration-tests:

@@ -1,0 +1,14 @@
+version: 2
+
+groups:
+  - name: a
+    command: echo
+    params: ["{{ output.b }}"]
+  - name: b
+    command: echo
+    params: ["{{ output.a }}"]
+
+flows:
+  loop:
+    mode: dag
+    run: [a, b]

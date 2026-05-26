@@ -142,3 +142,4 @@ private-key.pem
 config-*.yml
 !**/**/test-resources/config-**.yml
 *.pem
+.claude/

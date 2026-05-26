@@ -1,0 +1,17 @@
+version: 2
+
+groups:
+  - name: producer
+    command: echo
+    params: ["x"]
+  - name: consumer
+    command: echo
+    params: ["{{ output.producer }}"]
+
+flows:
+  bad:
+    mode: step
+    steps:
+      # consumer references producer's output, but they're in the same step.
+      # Step mode requires references to be satisfied by an EARLIER step.
+      - run: [consumer, producer]

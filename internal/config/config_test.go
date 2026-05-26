@@ -165,3 +165,22 @@ func TestLoadConfig(t *testing.T) {
 		require.Error(t, err) // file not found, NOT a panic
 	})
 }
+
+func TestGroup_UseShell(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		shell string
+		want  bool
+	}{
+		{"empty shell field means direct exec", "", false},
+		{"any non-empty value opts into shell mode", "/bin/sh", true},
+		{"absolute path counts", "/usr/local/bin/zsh", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := Group{Shell: tc.shell}
+			assert.Equal(t, tc.want, g.UseShell())
+		})
+	}
+}

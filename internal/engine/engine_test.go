@@ -208,3 +208,83 @@ func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ []string, 
 	defer c.after()
 	return "", nil
 }
+
+func TestEngine_Options(t *testing.T) {
+	cfg := &config.Config{
+		Groups:    []config.Group{{Name: "a", Command: "echo"}},
+		Execution: []config.Step{{Group: []string{"a"}}},
+	}
+
+	custom := NewMemoryOutputStore()
+	custom.Set("seed", "preloaded")
+
+	t.Run("WithOutputStore is honored", func(t *testing.T) {
+		e := New(cfg, WithOutputStore(custom), WithRunner(&fakeRunner{}))
+		assert.Same(t, custom, e.Outputs())
+	})
+
+	t.Run("WithExpander is honored", func(t *testing.T) {
+		called := false
+		var exp expanderFunc = func(s string, _ map[string]string) string {
+			called = true
+			return s
+		}
+		e := New(cfg,
+			WithExpander(exp),
+			WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}),
+		)
+		// engine has no template params, so we add one:
+		e.cfg.Groups[0].Params = []string{"hello"}
+		e.groups["a"] = e.cfg.Groups[0]
+
+		require.NoError(t, e.Run(context.Background()))
+		assert.True(t, called)
+	})
+
+	t.Run("WithLogger replaces the default Nop", func(t *testing.T) {
+		captured := &captureLogger{}
+		e := New(cfg,
+			WithLogger(captured),
+			WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}),
+		)
+		require.NoError(t, e.Run(context.Background()))
+		assert.NotEmpty(t, captured.lines)
+	})
+
+	t.Run("WithDryRun forces dry-run regardless of config", func(t *testing.T) {
+		r := &fakeRunner{}
+		e := New(cfg, WithDryRun(true), WithRunner(r))
+		require.NoError(t, e.Run(context.Background()))
+		assert.Empty(t, r.calls)
+	})
+}
+
+type expanderFunc func(string, map[string]string) string
+
+func (f expanderFunc) Expand(s string, o map[string]string) string { return f(s, o) }
+
+type captureLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *captureLogger) add(s string)             { c.mu.Lock(); c.lines = append(c.lines, s); c.mu.Unlock() }
+func (c *captureLogger) Debug(s string, _ ...any) { c.add("D:" + s) }
+func (c *captureLogger) Info(s string, _ ...any)  { c.add("I:" + s) }
+func (c *captureLogger) Warn(s string, _ ...any)  { c.add("W:" + s) }
+func (c *captureLogger) Error(s string, _ ...any) { c.add("E:" + s) }
+func (c *captureLogger) Trace(s string, _ ...any) { c.add("T:" + s) }
+
+func TestOutputStore_Snapshot(t *testing.T) {
+	t.Parallel()
+	s := NewMemoryOutputStore()
+	s.Set("a", "1")
+	s.Set("b", "2")
+	snap := s.Snapshot()
+	assert.Equal(t, "1", snap["a"])
+	assert.Equal(t, "2", snap["b"])
+	// Mutating the snapshot must not affect the store.
+	snap["a"] = "mutated"
+	v, _ := s.Get("a")
+	assert.Equal(t, "1", v)
+}

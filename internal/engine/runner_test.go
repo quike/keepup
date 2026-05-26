@@ -139,6 +139,23 @@ func TestMergeEnvs(t *testing.T) {
 }
 
 func TestPickShell(t *testing.T) {
+	t.Run("explicit override wins", func(t *testing.T) {
+		assert.Equal(t, "/usr/local/bin/zsh", pickShell("/usr/local/bin/zsh"))
+	})
+	t.Run("SHELL env is used when override is empty", func(t *testing.T) {
+		t.Setenv("SHELL", "/opt/bin/fish")
+		assert.Equal(t, "/opt/bin/fish", pickShell(""))
+	})
+	t.Run("falls back to /bin/sh when SHELL is empty", func(t *testing.T) {
+		t.Setenv("SHELL", "")
+		// On non-windows this is the fallback. On windows we'd hit COMSPEC; skip.
+		skipOnWindows(t)
+		assert.Equal(t, "/bin/sh", pickShell(""))
+	})
+}
+
+func TestShellFlag(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "/usr/local/bin/zsh", pickShell("/usr/local/bin/zsh"))
+	// shellFlag returns a non-empty platform-specific switch.
+	assert.NotEmpty(t, shellFlag())
 }

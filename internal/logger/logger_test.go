@@ -66,3 +66,45 @@ func TestNop(t *testing.T) {
 	l.Error("x")
 	l.Trace("x")
 }
+
+func TestAllLevelsEmit(t *testing.T) {
+	tests := []struct {
+		name  string
+		emit  func(Logger)
+		level string
+		want  string
+	}{
+		{"warn", func(l Logger) { l.Warn("w") }, "trace", `"warn"`},
+		{"error", func(l Logger) { l.Error("e") }, "trace", `"error"`},
+		{"trace", func(l Logger) { l.Trace("t") }, "trace", `"trace"`},
+		{"debug", func(l Logger) { l.Debug("d") }, "trace", `"debug"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewWithWriter(&buf, tc.level, false)
+			tc.emit(l)
+			assert.Contains(t, buf.String(), tc.want)
+		})
+	}
+}
+
+func TestNew_DefaultsToStdoutWithoutPanicking(t *testing.T) {
+	// Just exercise the New() constructor path so it gets covered. We don't
+	// assert on stdout contents to avoid polluting test output.
+	l := New("info", false)
+	assert.NotNil(t, l)
+
+	lp := New("info", true)
+	assert.NotNil(t, lp)
+}
+
+func TestEmit_NonStringKeyIsSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewWithWriter(&buf, "info", false)
+	// First "key" is an int, not a string — should be silently skipped.
+	l.Info("ok", 42, "ignored", "k", "v")
+	out := buf.String()
+	assert.Contains(t, out, `"k":"v"`)
+	assert.NotContains(t, out, `"42"`)
+}

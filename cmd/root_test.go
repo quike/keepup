@@ -86,3 +86,63 @@ func writeTempConfig(t *testing.T, body string) string {
 	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
 	return p
 }
+
+func TestDefaultConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	got, err := defaultConfigPath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".config", "keepup", "keepup.yml"), got)
+}
+
+func TestRootCmd_RunsEngineSuccessfully(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", cfgPath})
+	require.NoError(t, cmd.Execute())
+}
+
+func TestRootCmd_FilterByGroupNarrowsExecution(t *testing.T) {
+	t.Parallel()
+	// A config with two groups but we only want to run "alpha"; "bravo"'s
+	// failing command must not execute.
+	cfg := `
+groups:
+  - name: alpha
+    command: echo
+    params: ["alpha-ok"]
+  - name: bravo
+    command: this-must-not-run
+execution:
+  - group: ["alpha", "bravo"]
+`
+	cfgPath := writeTempConfig(t, cfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"--config", cfgPath, "--group", "alpha"})
+	require.NoError(t, cmd.Execute())
+}
+
+func TestExecute_Help(t *testing.T) {
+	// Execute() reads os.Args via cobra. We temporarily swap them to drive the
+	// real entrypoint and assert the exit code path.
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	os.Args = []string{"keepup", "--help"}
+	code := Execute()
+	assert.Equal(t, 0, code)
+}
+
+func TestExecute_BadFlagReturnsNonZero(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	os.Args = []string{"keepup", "--config", "/no/such/path/keepup.yml"}
+	code := Execute()
+	assert.Equal(t, 1, code)
+}

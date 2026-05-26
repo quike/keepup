@@ -35,9 +35,21 @@ Three reasons:
 3. **It's an early project.** There is no installed base big enough to
    justify a permanent shim. Today is the cheapest moment.
 
-If you do want an automated converter, a dedicated `keepup migrate <path>`
-subcommand is the cleanest follow-up (file an issue if you want it
-prioritized). The engine itself would stay single-schema.
+### Is there an automated converter?
+
+Yes — `keepup migrate`:
+
+```sh
+keepup migrate ~/.config/keepup/keepup.yml            # print v2 to stdout
+keepup migrate old.yml -o keepup.yml                   # write to a file
+keepup migrate old.yml --flow ci                       # name the generated flow
+```
+
+It preserves groups, env, and settings, turns the single v1 `execution:` block
+into one step-mode flow (the parallel waves are kept), and validates the result
+against the v2 parser before emitting — so a successful migration is guaranteed
+to load. The engine itself stays single-schema; `migrate` is the only code that
+understands v1.
 
 ### What changed in the YAML?
 
@@ -55,7 +67,8 @@ prioritized). The engine itself would stay single-schema.
 
 ### How do I migrate by hand?
 
-Two-step recipe:
+Prefer `keepup migrate` (above); but if you want to do it manually it's a
+two-step recipe:
 
 1. Bump `version: 1` to `version: 2`.
 2. Rename `execution:` to a flow under `flows:`, and rename each

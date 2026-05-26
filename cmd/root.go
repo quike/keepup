@@ -79,6 +79,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.AddCommand(newListCmd(opts, stdout))
 	root.AddCommand(newValidateCmd(opts, stdout))
 	root.AddCommand(newGraphCmd(opts, stdout))
+	root.AddCommand(newMigrateCmd(stdout))
 	root.AddCommand(newVersionCmd())
 	return root
 }

@@ -58,6 +58,7 @@ keepup list               # list flows (default starred)
 keepup list groups        # list groups
 keepup validate           # parse & reference-check; no execution
 keepup graph [flow]       # emit a Mermaid diagram of the data DAG
+keepup migrate <path>     # convert a legacy v1 file to v2
 keepup version
 ```
 

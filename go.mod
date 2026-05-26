@@ -1,6 +1,6 @@
 module github.com/quike/keepup
 
-go 1.24
+go 1.25.0
 
 toolchain go1.26.3
 
@@ -8,7 +8,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

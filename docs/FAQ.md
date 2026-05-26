@@ -16,7 +16,7 @@ with:
 load configuration: unsupported schema version 1: this binary only supports version 2
 ```
 
-The error is explicit on purpose: you should *see* that you're on the wrong
+The error is explicit on purpose: you should _see_ that you're on the wrong
 schema, not have keepup silently transform your file.
 
 ### Why a clean break instead of a compatibility shim?
@@ -41,14 +41,14 @@ prioritized). The engine itself would stay single-schema.
 
 ### What changed in the YAML?
 
-| v1 | v2 |
-|---|---|
-| `version: 1` | `version: 2` |
-| `execution:` (single, top-level) | `flows: {<name>: {...}}` (one or many) |
-| `execution[i].group: [a, b]` | inside a `step`-mode flow: `steps[i].run: [a, b]` |
-| (no equivalent — only one pipeline per file) | `default: <flow>` selects the implicit target |
-| (no equivalent — order was always explicit) | `mode: dag` opts into topological scheduling |
-| (no equivalent) | `keepup list`, `keepup validate`, `keepup graph` |
+| v1                                           | v2                                                |
+| -------------------------------------------- | ------------------------------------------------- |
+| `version: 1`                                 | `version: 2`                                      |
+| `execution:` (single, top-level)             | `flows: {<name>: {...}}` (one or many)            |
+| `execution[i].group: [a, b]`                 | inside a `step`-mode flow: `steps[i].run: [a, b]` |
+| (no equivalent — only one pipeline per file) | `default: <flow>` selects the implicit target     |
+| (no equivalent — order was always explicit)  | `mode: dag` opts into topological scheduling      |
+| (no equivalent)                              | `keepup list`, `keepup validate`, `keepup graph`  |
 
 `groups` themselves are unchanged — `name`, `command`, `params`, `env`,
 `shell`, `description` all behave the same way.
@@ -87,11 +87,11 @@ failure.
 
 ### When do I use step mode vs. dag mode?
 
-| Use case | Pick |
-|----------|------|
-| You want explicit, line-readable order with barriers between phases | **step** |
-| You want maximum throughput; the data deps already describe the order | **dag** |
-| You're not sure yet — let `{{ output.X }}` references describe the shape | **dag** |
+| Use case                                                                  | Pick                                 |
+| ------------------------------------------------------------------------- | ------------------------------------ |
+| You want explicit, line-readable order with barriers between phases       | **step**                             |
+| You want maximum throughput; the data deps already describe the order     | **dag**                              |
+| You're not sure yet — let `{{ output.X }}` references describe the shape  | **dag**                              |
 | You want the same `build` group reused in three different pipeline shapes | **either**; just declare three flows |
 
 Both modes honor `max-concurrency`, `--dry-run`, context cancellation, and
@@ -140,7 +140,7 @@ store.
 ### When are outputs visible to a group?
 
 - **Step mode**: when group `G` runs in step N, it sees the outputs of every
-  group from steps `1..N-1`. Same-step siblings are *not* visible — that
+  group from steps `1..N-1`. Same-step siblings are _not_ visible — that
   would be a race. References that target same-step or later-step groups
   are rejected at parse time.
 - **DAG mode**: when group `G` runs, it sees the outputs of every group in
@@ -193,6 +193,58 @@ schedulers honor it.
 The first error in a step (step mode) or anywhere in the DAG (dag mode)
 cancels its siblings via the shared `errgroup` context. The flow then
 returns the wrapped error. Subsequent steps are not started.
+
+---
+
+## Caching and gating
+
+### How does caching decide to skip a group?
+
+A group with a `cache:` block is fingerprinted before it runs. The
+fingerprint folds in the `method`, the `command`, the `params`, and the
+contents (or mtime+size) of every file matched by `reads`. If the fingerprint
+matches the stored one **and** every `writes` path still exists, keepup skips
+the runner and replays the previously-captured output. Otherwise it runs and
+refreshes the entry.
+
+### Where is the cache stored? Is it safe to commit or share?
+
+Under `settings.cache-dir` (default `.keepup-cache`), one JSON file per group
+containing the fingerprint and the captured output. It's a build artifact —
+add it to `.gitignore`. You *can* point `cache-dir` at a shared volume to
+share hits across machines or CI runners, since the fingerprint is
+content-based.
+
+### `hash` vs `mtime` — which method?
+
+`hash` reads file contents, so it's correct even when a file is touched but
+unchanged; `mtime` only stats files, so it's faster on large trees but will
+re-run if a tool rewrites timestamps without changing content. Default is
+`hash`; switch to `mtime` only if input reads become a measurable cost.
+
+### How do I force a rebuild?
+
+`keepup run --no-cache` ignores existing entries and runs everything (entries
+are still refreshed afterward). Or delete the `cache-dir`.
+
+### What's the difference between `skip-if` and `cache`?
+
+`skip-if` is a **predicate you write** ("is this already done?"), evaluated by
+running a shell snippet; exit 0 means skip. `cache` is **automatic
+fingerprinting** of declared inputs. Use `skip-if` for cheap idempotency
+checks (`test -d /some/dir`); use `cache` when "did the inputs change?" is the
+real question. They compose — `require` → `skip-if` → `cache` → run.
+
+### What does a skipped group publish for `{{ output.X }}`?
+
+A `cache` hit replays the stored output. A `skip-if` skip publishes the last
+cached output if the group also has a `cache:` block, otherwise an empty
+string. Downstream references always resolve to *something*, never an error.
+
+### Do predicates and caching run during `--dry-run`?
+
+No. Dry-run logs what *would* happen and evaluates neither predicates nor the
+cache, so it never touches disk or spawns shells.
 
 ---
 

@@ -34,6 +34,7 @@ type runtimeOpts struct {
 	configFile string
 	dryRun     bool
 	verbose    bool
+	noCache    bool
 
 	cfg *config.Config
 	log logger.Logger
@@ -82,7 +83,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func newRunCmd(opts *runtimeOpts) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "run [flow]",
 		Short: "Execute a flow (uses the configured default when no flow is given)",
 		Args:  cobra.MaximumNArgs(1),
@@ -97,10 +98,13 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 			e := engine.New(opts.cfg,
 				engine.WithLogger(opts.log),
 				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
+				engine.WithNoCache(opts.noCache),
 			)
 			return e.RunFlow(cmd.Context(), flowName)
 		},
 	}
+	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "Ignore cached results; run every group")
+	return cmd
 }
 
 func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
@@ -165,7 +169,8 @@ func printFlows(out io.Writer, cfg *config.Config) error {
 }
 
 func printGroups(out io.Writer, cfg *config.Config) error {
-	for _, g := range cfg.Groups {
+	for i := range cfg.Groups {
+		g := &cfg.Groups[i]
 		desc := g.Description
 		if desc == "" {
 			desc = noDescription

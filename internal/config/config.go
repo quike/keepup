@@ -49,12 +49,27 @@ type Logging struct {
 	Pretty bool   `yaml:"pretty"`
 }
 
+// DefaultCacheDir is where fingerprints are stored when settings.cache-dir
+// is not set.
+const DefaultCacheDir = ".keepup-cache"
+
+// CacheMethod selects how a group's input fingerprint is computed.
+type CacheMethod string
+
+const (
+	// CacheHash hashes file contents — correct but reads every input.
+	CacheHash CacheMethod = "hash"
+	// CacheMtime uses modification time + size — fast but coarser.
+	CacheMtime CacheMethod = "mtime"
+)
+
 // Settings holds global runtime settings.
 type Settings struct {
 	DryRun         bool    `yaml:"dry-run"`
 	Logging        Logging `yaml:"logging"`
 	WorkingDir     string  `yaml:"working-dir"`
 	MaxConcurrency int     `yaml:"max-concurrency"`
+	CacheDir       string  `yaml:"cache-dir,omitempty"`
 }
 
 // Group is an atomic, reusable command unit. Groups know nothing about flows;
@@ -63,6 +78,9 @@ type Settings struct {
 // Shell controls how the command is launched:
 //   - empty: exec directly with Params as argv (safe; no shell interpretation)
 //   - non-empty: pipe `command + params` through the named shell program (opt-in).
+//
+// Gating (Require, SkipIf) and Cache are optional short-circuits evaluated
+// before the command runs; see the engine for ordering semantics.
 type Group struct {
 	Name        string            `yaml:"name"`
 	Command     string            `yaml:"command"`
@@ -70,6 +88,17 @@ type Group struct {
 	Shell       string            `yaml:"shell,omitempty"`
 	Description string            `yaml:"description,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
+	Require     string            `yaml:"require,omitempty"`
+	SkipIf      string            `yaml:"skip-if,omitempty"`
+	Cache       *Cache            `yaml:"cache,omitempty"`
+}
+
+// Cache declares the inputs (and optional outputs) that decide whether a
+// group can be skipped because nothing changed since the last run.
+type Cache struct {
+	Method CacheMethod `yaml:"method,omitempty"`
+	Reads  []string    `yaml:"reads"`
+	Writes []string    `yaml:"writes,omitempty"`
 }
 
 // UseShell reports whether the group opted into shell mode.
@@ -170,9 +199,31 @@ func (c *Config) indexGroups() (map[string]*Group, error) {
 		if _, dup := out[g.Name]; dup {
 			return nil, fmt.Errorf("groups: duplicate name %q", g.Name)
 		}
+		if err := validateCache(g); err != nil {
+			return nil, err
+		}
 		out[g.Name] = g
 	}
 	return out, nil
+}
+
+// validateCache normalizes and checks a group's optional cache block.
+func validateCache(g *Group) error {
+	if g.Cache == nil {
+		return nil
+	}
+	if len(g.Cache.Reads) == 0 {
+		return fmt.Errorf("group %q: cache.reads must list at least one path or glob", g.Name)
+	}
+	switch g.Cache.Method {
+	case "":
+		g.Cache.Method = CacheHash
+	case CacheHash, CacheMtime:
+		// ok
+	default:
+		return fmt.Errorf("group %q: unknown cache.method %q (use 'hash' or 'mtime')", g.Name, g.Cache.Method)
+	}
+	return nil
 }
 
 func (c *Config) validateFlow(name string, f *Flow, groups map[string]*Group) error {

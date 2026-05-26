@@ -161,6 +161,89 @@ flows:
 	}
 }
 
+func TestNewConfig_CacheAndGating(t *testing.T) {
+	t.Run("parses cache, skip-if, require", func(t *testing.T) {
+		cfg, err := NewConfig([]byte(`
+version: 2
+groups:
+  - name: build
+    command: go
+    params: [build]
+    require: "command -v go"
+    skip-if: "test -f bin/keepup"
+    cache:
+      method: hash
+      reads: ["**/*.go", "go.mod"]
+      writes: ["bin/keepup"]
+flows:
+  f:
+    steps:
+      - run: [build]
+`))
+		require.NoError(t, err)
+		g := cfg.GroupByName("build")
+		require.NotNil(t, g)
+		assert.Equal(t, "command -v go", g.Require)
+		assert.Equal(t, "test -f bin/keepup", g.SkipIf)
+		require.NotNil(t, g.Cache)
+		assert.Equal(t, CacheHash, g.Cache.Method)
+		assert.Equal(t, []string{"**/*.go", "go.mod"}, g.Cache.Reads)
+		assert.Equal(t, []string{"bin/keepup"}, g.Cache.Writes)
+	})
+
+	t.Run("cache method defaults to hash", func(t *testing.T) {
+		cfg, err := NewConfig([]byte(`
+version: 2
+groups:
+  - name: build
+    command: go
+    cache:
+      reads: ["main.go"]
+flows:
+  f:
+    steps:
+      - run: [build]
+`))
+		require.NoError(t, err)
+		assert.Equal(t, CacheHash, cfg.GroupByName("build").Cache.Method)
+	})
+
+	t.Run("cache without reads is rejected", func(t *testing.T) {
+		_, err := NewConfig([]byte(`
+version: 2
+groups:
+  - name: build
+    command: go
+    cache:
+      method: hash
+flows:
+  f:
+    steps:
+      - run: [build]
+`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cache.reads must list at least one")
+	})
+
+	t.Run("unknown cache method is rejected", func(t *testing.T) {
+		_, err := NewConfig([]byte(`
+version: 2
+groups:
+  - name: build
+    command: go
+    cache:
+      method: bogus
+      reads: ["main.go"]
+flows:
+  f:
+    steps:
+      - run: [build]
+`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown cache.method")
+	})
+}
+
 func TestLoadConfig(t *testing.T) {
 	t.Run("valid file", func(t *testing.T) {
 		dir := t.TempDir()

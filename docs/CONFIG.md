@@ -40,18 +40,20 @@ settings:
   dry-run: false # bool; default false. CLI --dry-run can override.
   working-dir: /tmp # string; reserved for future per-task chdir support.
   max-concurrency: 0 # int;   0 means unbounded.
+  cache-dir: .keepup-cache # string; where cache fingerprints are stored.
   logging:
     level: info # trace | debug | info | warn | error
     pretty: true # true = human; false = JSON lines.
 ```
 
-| Field             | Default         | Notes                                                                                                                         |
-| ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `dry-run`         | `false`         | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
-| `working-dir`     | `""`            | Currently reserved. Not consumed by the runner yet.                                                                           |
-| `max-concurrency` | `0` (unbounded) | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
-| `logging.level`   | `info`          | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
-| `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line.                                                          |
+| Field             | Default          | Notes                                                                                                                         |
+| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `dry-run`         | `false`          | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
+| `working-dir`     | `""`             | Currently reserved. Not consumed by the runner yet.                                                                           |
+| `max-concurrency` | `0` (unbounded)  | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
+| `cache-dir`       | `.keepup-cache`  | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)).                                    |
+| `logging.level`   | `info`           | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
+| `logging.pretty`  | `false`          | `true` for the human renderer, `false` for one JSON object per line.                                                          |
 
 ---
 
@@ -94,6 +96,9 @@ groups:
 | `env`         | map        | no       | Per-group env overrides; applied on top of the global `env`.                                                            |
 | `shell`       | string     | no       | When non-empty, the named shell program runs `command + params` as a single shell-interpreted line (opt-in shell mode). |
 | `description` | string     | no       | Free text used by `keepup list groups`.                                                                                 |
+| `require`     | string     | no       | Predicate command; non-zero exit fails the group before it runs (see [Gating](#gating-skip-if-and-require)).             |
+| `skip-if`     | string     | no       | Predicate command; exit 0 skips the group (see [Gating](#gating-skip-if-and-require)).                                   |
+| `cache`       | map        | no       | Skip the group when declared inputs are unchanged (see [Caching](#caching)).                                            |
 
 ### Direct exec vs. shell mode
 
@@ -143,6 +148,64 @@ Reference rules:
 
 These rules are enforced at parse time (`keepup validate`), not at run time,
 so typos and ordering bugs surface immediately.
+
+### Gating: `skip-if` and `require`
+
+Two optional predicates let a group decide whether it should run. Both are
+shell snippets evaluated through the platform shell; only their exit status
+matters.
+
+```yaml
+groups:
+  - name: create-cache-dir
+    command: mkdir
+    params: [-p, /var/cache/app]
+    require: "command -v mkdir" # exit != 0 → hard fail before running
+    skip-if: "test -d /var/cache/app" # exit 0 → skip the group entirely
+```
+
+| Field | Meaning | On match |
+|-------|---------|----------|
+| `require` | Precondition that must hold | Non-zero exit → the group (and its flow) fails with a clear error. |
+| `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped; its output is the last cached value if `cache:` is set, otherwise empty. |
+
+Evaluation order per group: `require` → `skip-if` → `cache` → run. In
+`--dry-run`, predicates are **not** evaluated — keepup only logs what it would
+do.
+
+### Caching
+
+A `cache:` block lets keepup skip a group when its declared inputs haven't
+changed since the last successful run. On a hit, the runner is not invoked and
+the previously-captured output is replayed (so downstream `{{ output.X }}`
+references still resolve).
+
+```yaml
+groups:
+  - name: build
+    command: go
+    params: [build, -o, bin/keepup, ./]
+    cache:
+      method: hash # 'hash' (default) or 'mtime'
+      reads: ["**/*.go", "go.mod", "go.sum"] # inputs; globs support **
+      writes: ["bin/keepup"] # optional; must still exist for a hit
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `method` | `hash` | `hash` reads file contents (correct); `mtime` uses modtime+size (faster, coarser). |
+| `reads` | — (required) | Input paths/globs. The fingerprint also folds in `command` + `params`, so changing the command busts the cache. |
+| `writes` | `[]` | Output paths/globs. If any declared output is missing, the cache is treated as a miss and the group re-runs. |
+
+Mechanics:
+
+- The fingerprint is stored under `settings.cache-dir` (default
+  `.keepup-cache`), one JSON file per group. Point `cache-dir` at a shared
+  volume to share hits across machines/CI.
+- Globs use `**` (via doublestar), so `src/**/*.go` works.
+- `keepup run --no-cache` ignores existing entries and forces every group to
+  run (entries are still refreshed afterwards).
+- Caching is per-group opt-in: groups without a `cache:` block always run.
 
 ---
 
@@ -245,6 +308,12 @@ Global flags:
 | `-c, --config <path>` | Override the config-file path (defaults to `~/.config/keepup/keepup.yml`). |
 | `-d, --dry-run`       | Skip the runner; log what would run. Stacks on top of `settings.dry-run`.  |
 | `-v, --verbose`       | Dump the parsed config before running.                                     |
+
+`run`-only flags:
+
+| Flag         | Purpose                                                            |
+| ------------ | ------------------------------------------------------------------ |
+| `--no-cache` | Ignore cached results and run every group (entries still refresh). |
 
 `keepup graph <flow>` prints a Mermaid `graph TD` showing the data DAG that
 emerges from the `{{ output.X }}` references — useful as a sanity check

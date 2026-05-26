@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"runtime"
 	"testing"
 
@@ -66,4 +67,22 @@ func TestVersionCmd(t *testing.T) {
 			assert.Equal(t, tc.sha, got["sha"])
 		})
 	}
+}
+
+func TestVersionCmd_EncoderErrorPropagates(t *testing.T) {
+	// Swap the encoder for one that always fails so the otherwise-unreachable
+	// error branch is exercised.
+	boom := errors.New("encode-fail")
+	orig := versionEncode
+	t.Cleanup(func() { versionEncode = orig })
+	versionEncode = func(any) ([]byte, error) { return nil, boom }
+
+	var out bytes.Buffer
+	cmd := newVersionCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
 }

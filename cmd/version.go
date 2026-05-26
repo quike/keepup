@@ -18,6 +18,12 @@ var (
 
 const versionUse = "version"
 
+// versionEncode is the JSON encoder used by the version command. Exposed as a
+// package-level variable so tests can substitute a failing encoder to exercise
+// the otherwise-unreachable error branch (json.Marshal on a map[string]string
+// cannot fail in practice).
+var versionEncode = json.Marshal
+
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   versionUse,
@@ -38,7 +44,7 @@ func newVersionCmd() *cobra.Command {
 				"arch":    arch,
 				"sha":     CLISha,
 			}
-			payload, err := json.Marshal(info)
+			payload, err := versionEncode(info)
 			if err != nil {
 				return fmt.Errorf("encode version info: %w", err)
 			}

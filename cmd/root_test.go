@@ -177,3 +177,16 @@ func TestDumpConfig_PropagatesWriteError(t *testing.T) {
 	err := dumpConfig(failingWriter{}, "/tmp/keepup.yml", cfg)
 	require.Error(t, err)
 }
+
+func TestDefaultConfigPath_HomeMissingFails(t *testing.T) {
+	// On Unix, os.UserHomeDir returns an error when $HOME is empty.
+	if home := os.Getenv("HOME"); home == "" {
+		t.Skip("HOME not set on this platform; cannot provoke UserHomeDir failure")
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	_, err := defaultConfigPath()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "determine home dir")
+}

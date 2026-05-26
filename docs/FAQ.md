@@ -248,6 +248,47 @@ cache, so it never touches disk or spawns shells.
 
 ---
 
+## Watch mode
+
+### What does `keepup watch` watch?
+
+The union of the `cache.reads` globs across the chosen flow's groups. Those
+declarations already describe each group's inputs, so watch reuses them as the
+file set — no separate watch configuration. The flow must have at least one
+group with `cache.reads`, otherwise there's nothing to watch and the command
+errors.
+
+### Why does watch reuse `cache.reads` instead of a dedicated `watch:` field?
+
+Because the inputs that should trigger a rebuild are exactly the inputs that
+define a cache hit. Reusing one declaration keeps the two features consistent:
+the same change that busts the cache is the same change that triggers a re-run,
+and unchanged groups are skipped on each pass.
+
+### How does it avoid rebuilding everything on every keystroke?
+
+Two layers. First, a short debounce (200ms) collapses bursts of editor events
+into one re-run. Second, caching means the re-run only executes groups whose
+inputs actually changed — the rest are cache hits.
+
+### Does watch run once on start?
+
+Yes. It performs an initial run immediately, then watches. A failing run is
+logged but does not stop watching — fix the code and save again.
+
+### How do I stop it?
+
+Ctrl-C (SIGINT) or SIGTERM. The signal propagates through the context, the
+in-flight run is cancelled, and `watch` returns cleanly.
+
+### Are newly-created files/directories picked up?
+
+New directories under a watched tree are added automatically as they appear, so
+files created in them are seen. Brand-new top-level trees that didn't exist when
+watch started are the one gap — restart watch if you add a whole new source root.
+
+---
+
 ## CLI
 
 ### What replaces the old `--group <name>` flag?

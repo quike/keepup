@@ -294,12 +294,19 @@ at an existing flow; otherwise the file is rejected at parse time.
 
 ```sh
 keepup run [flow]            # run the named flow, or the default
+keepup watch [flow]          # re-run a flow when its cache.reads inputs change
 keepup list                  # show declared flows + descriptions
 keepup list groups           # show declared groups
 keepup validate              # parse + validate; no execution
 keepup graph [flow]          # emit a Mermaid diagram of the data DAG
 keepup version
 ```
+
+`keepup watch` watches the union of `cache.reads` globs across the chosen
+flow's groups, re-running the flow on any change. Because caching short-circuits
+unchanged groups, only the work that actually depends on a changed file
+re-executes. The flow must have at least one group with a `cache.reads` block,
+otherwise there is nothing to watch.
 
 Global flags:
 

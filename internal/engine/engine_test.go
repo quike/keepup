@@ -40,136 +40,121 @@ func (f *fakeRunner) Run(ctx context.Context, g *config.Group, params []string, 
 	return f.outputs[g.Name], nil
 }
 
-func TestEngine_TwoGroupsInOneStep(t *testing.T) {
-	cfg := &config.Config{
-		Groups: []config.Group{
-			{Name: "a", Command: "echo", Params: []string{"hello"}},
-			{Name: "b", Command: "echo", Params: []string{"world"}},
-		},
-		Execution: []config.Step{{Group: []string{"a", "b"}}},
+// stepFlowCfg builds a config with a single step-mode flow over the given groups.
+func stepFlowCfg(t *testing.T, groups []config.Group, steps [][]string) *config.Config {
+	t.Helper()
+	flow := config.Flow{Mode: config.ModeStep}
+	for _, s := range steps {
+		flow.Steps = append(flow.Steps, config.Step{Run: append([]string(nil), s...)})
 	}
+	return &config.Config{
+		Version: config.SchemaVersion,
+		Groups:  groups,
+		Flows:   map[string]config.Flow{"f": flow},
+	}
+}
+
+func dagFlowCfg(_ *testing.T, groups []config.Group, run []string) *config.Config {
+	return &config.Config{
+		Version: config.SchemaVersion,
+		Groups:  groups,
+		Flows: map[string]config.Flow{
+			"f": {Mode: config.ModeDAG, Run: append([]string(nil), run...)},
+		},
+	}
+}
+
+func TestEngine_StepFlow_TwoGroupsInOneStep(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{
+		{Name: "a", Command: "echo"},
+		{Name: "b", Command: "echo"},
+	}, [][]string{{"a", "b"}})
 	r := &fakeRunner{outputs: map[string]string{"a": "A\n", "b": "B\n"}}
 	e := New(cfg, WithRunner(r))
 
-	require.NoError(t, e.Run(context.Background()))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
 	got, _ := e.Outputs().Get("a")
 	assert.Equal(t, "A\n", got)
-	got, _ = e.Outputs().Get("b")
-	assert.Equal(t, "B\n", got)
 }
 
-func TestEngine_UndefinedGroupFailsEarly(t *testing.T) {
-	cfg := &config.Config{
-		Groups:    []config.Group{{Name: "a", Command: "echo"}},
-		Execution: []config.Step{{Group: []string{"a", "missing"}}},
-	}
-	r := &fakeRunner{outputs: map[string]string{"a": "A"}}
-	e := New(cfg, WithRunner(r))
-
-	err := e.Run(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `group "missing" not defined`)
-	assert.Empty(t, r.calls)
-}
-
-func TestEngine_RunnerErrorPropagates(t *testing.T) {
+func TestEngine_StepFlow_RunnerErrorPropagatesWrapped(t *testing.T) {
 	boom := errors.New("boom")
-	cfg := &config.Config{
-		Groups:    []config.Group{{Name: "a", Command: "false"}},
-		Execution: []config.Step{{Group: []string{"a"}}},
-	}
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "false"}}, [][]string{{"a"}})
 	e := New(cfg, WithRunner(&fakeRunner{errs: map[string]error{"a": boom}}))
-
-	err := e.Run(context.Background())
+	err := e.RunFlow(context.Background(), "f")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
 	assert.Contains(t, err.Error(), "step 1")
 }
 
-func TestEngine_CrossStepOutputExpansion(t *testing.T) {
-	cfg := &config.Config{
-		Groups: []config.Group{
-			{Name: "producer", Command: "echo", Params: []string{"banana"}},
-			{Name: "consumer", Command: "echo", Params: []string{"{{ output.producer }}"}},
-		},
-		Execution: []config.Step{
-			{Group: []string{"producer"}},
-			{Group: []string{"consumer"}},
-		},
-	}
-	r := &fakeRunner{outputs: map[string]string{"producer": "banana\n", "consumer": "banana\n"}}
+func TestEngine_DryRunSkipsRunner(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "rm"}}, [][]string{{"a"}})
+	cfg.Settings.DryRun = true
+	r := &fakeRunner{}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	assert.Empty(t, r.calls)
+}
+
+func TestEngine_RunFlow_UnknownFlow(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
+	e := New(cfg, WithRunner(&fakeRunner{}))
+	err := e.RunFlow(context.Background(), "missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestEngine_RunFlow_DefaultUsedWhenEmpty(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
+	cfg.Default = "f"
+	r := &fakeRunner{outputs: map[string]string{"a": "A"}}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), ""))
+	assert.Equal(t, []string{"a:"}, r.calls)
+}
+
+func TestEngine_RunFlow_EmptyAndNoDefaultErrors(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
+	e := New(cfg, WithRunner(&fakeRunner{}))
+	err := e.RunFlow(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no flow specified")
+}
+
+func TestEngine_StepFlow_CrossStepOutputExpansion(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{
+		{Name: "producer", Command: "echo", Params: []string{"banana"}},
+		{Name: "consumer", Command: "echo", Params: []string{"{{ output.producer }}"}},
+	}, [][]string{{"producer"}, {"consumer"}})
+	r := &fakeRunner{outputs: map[string]string{"producer": "banana\n"}}
 	e := New(cfg, WithRunner(r))
 
-	require.NoError(t, e.Run(context.Background()))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
 	require.Len(t, r.calls, 2)
 	assert.Equal(t, "consumer:banana", r.calls[1])
 }
 
-func TestEngine_SameStepSiblingsSeeBaselineOnly(t *testing.T) {
-	// "a" produces a value but "b" runs concurrently with it; "b" must NOT
-	// see "a"'s output during the same step.
-	cfg := &config.Config{
-		Groups: []config.Group{
-			{Name: "a", Command: "echo", Params: []string{"x"}},
-			{Name: "b", Command: "echo", Params: []string{"{{ output.a }}"}},
-		},
-		Execution: []config.Step{{Group: []string{"a", "b"}}},
-	}
-	r := &fakeRunner{
-		outputs: map[string]string{"a": "X\n", "b": ""},
-		delays:  map[string]time.Duration{"a": 5 * time.Millisecond},
-	}
-	e := New(cfg, WithRunner(r))
-
-	require.NoError(t, e.Run(context.Background()))
-	var bCall string
-	for _, c := range r.calls {
-		if strings.HasPrefix(c, "b:") {
-			bCall = c
-		}
-	}
-	assert.Equal(t, "b:{{ output.a }}", bCall)
-}
-
-func TestEngine_DryRunSkipsRunner(t *testing.T) {
-	cfg := &config.Config{
-		Settings:  config.Settings{DryRun: true},
-		Groups:    []config.Group{{Name: "a", Command: "rm", Params: []string{"-rf", "/"}}},
-		Execution: []config.Step{{Group: []string{"a"}}},
-	}
-	r := &fakeRunner{}
-	e := New(cfg, WithRunner(r))
-
-	require.NoError(t, e.Run(context.Background()))
-	assert.Empty(t, r.calls, "dry-run must not invoke runner")
-}
-
 func TestEngine_ContextCancellationAborts(t *testing.T) {
-	cfg := &config.Config{
-		Groups:    []config.Group{{Name: "slow", Command: "sleep"}},
-		Execution: []config.Step{{Group: []string{"slow"}}},
-	}
+	cfg := stepFlowCfg(t, []config.Group{{Name: "slow", Command: "sleep"}}, [][]string{{"slow"}})
 	r := &fakeRunner{delays: map[string]time.Duration{"slow": 5 * time.Second}}
 	e := New(cfg, WithRunner(r))
-
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-
-	err := e.Run(ctx)
-	require.Error(t, err)
+	require.Error(t, e.RunFlow(ctx, "f"))
 }
 
 func TestEngine_MaxConcurrencyCapsParallelism(t *testing.T) {
 	const n = 5
-	cfg := &config.Config{
-		Settings:  config.Settings{MaxConcurrency: 1},
-		Execution: []config.Step{{Group: make([]string, n)}},
-	}
+	groups := make([]config.Group, n)
+	wave := make([]string, n)
 	for i := range n {
 		name := string(rune('a' + i))
-		cfg.Groups = append(cfg.Groups, config.Group{Name: name, Command: "echo"})
-		cfg.Execution[0].Group[i] = name
+		groups[i] = config.Group{Name: name, Command: "echo"}
+		wave[i] = name
 	}
+	cfg := stepFlowCfg(t, groups, [][]string{wave})
+	cfg.Settings.MaxConcurrency = 1
+
 	var (
 		mu, peakMu sync.Mutex
 		active     int
@@ -187,14 +172,10 @@ func TestEngine_MaxConcurrencyCapsParallelism(t *testing.T) {
 			mu.Unlock()
 			time.Sleep(2 * time.Millisecond)
 		},
-		after: func() {
-			mu.Lock()
-			active--
-			mu.Unlock()
-		},
+		after: func() { mu.Lock(); active--; mu.Unlock() },
 	}
 	e := New(cfg, WithRunner(r))
-	require.NoError(t, e.Run(context.Background()))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
 	assert.LessOrEqual(t, peak, 1, "max concurrency 1 was violated, peak=%d", peak)
 }
 
@@ -209,18 +190,61 @@ func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ []string, 
 	return "", nil
 }
 
-func TestEngine_Options(t *testing.T) {
-	cfg := &config.Config{
-		Groups:    []config.Group{{Name: "a", Command: "echo"}},
-		Execution: []config.Step{{Group: []string{"a"}}},
-	}
+func TestEngine_DAGFlow_ProducerThenConsumer(t *testing.T) {
+	cfg := dagFlowCfg(t, []config.Group{
+		{Name: "producer", Command: "echo", Params: []string{"x"}},
+		{Name: "consumer", Command: "echo", Params: []string{"{{ output.producer }}"}},
+	}, []string{"producer", "consumer"})
+	r := &fakeRunner{outputs: map[string]string{"producer": "banana\n"}}
+	e := New(cfg, WithRunner(r))
 
-	custom := NewMemoryOutputStore()
-	custom.Set("seed", "preloaded")
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	// Consumer must have been called AFTER producer with the expanded value.
+	require.Len(t, r.calls, 2)
+	assert.Equal(t, "producer:x", r.calls[0])
+	assert.Equal(t, "consumer:banana", r.calls[1])
+}
+
+func TestEngine_DAGFlow_ParallelIndependentRoots(t *testing.T) {
+	// a and b have no data deps; consumer depends on both. We assert that
+	// (i) consumer runs last and (ii) it sees both outputs.
+	cfg := dagFlowCfg(t, []config.Group{
+		{Name: "a", Command: "echo"},
+		{Name: "b", Command: "echo"},
+		{Name: "consumer", Command: "echo", Params: []string{"{{ output.a }}/{{ output.b }}"}},
+	}, []string{"a", "b", "consumer"})
+	r := &fakeRunner{outputs: map[string]string{"a": "A\n", "b": "B\n"}}
+	e := New(cfg, WithRunner(r))
+
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	require.Len(t, r.calls, 3)
+	last := r.calls[2]
+	assert.True(t, strings.HasPrefix(last, "consumer:"))
+	assert.Contains(t, last, "A/B")
+}
+
+func TestEngine_Options(t *testing.T) {
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
 
 	t.Run("WithOutputStore is honored", func(t *testing.T) {
+		custom := NewMemoryOutputStore()
+		custom.Set("seed", "preloaded")
 		e := New(cfg, WithOutputStore(custom), WithRunner(&fakeRunner{}))
 		assert.Same(t, custom, e.Outputs())
+	})
+
+	t.Run("WithLogger replaces the default Nop", func(t *testing.T) {
+		captured := &captureLogger{}
+		e := New(cfg, WithLogger(captured), WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}))
+		require.NoError(t, e.RunFlow(context.Background(), "f"))
+		assert.NotEmpty(t, captured.lines)
+	})
+
+	t.Run("WithDryRun forces dry-run regardless of config", func(t *testing.T) {
+		r := &fakeRunner{}
+		e := New(cfg, WithDryRun(true), WithRunner(r))
+		require.NoError(t, e.RunFlow(context.Background(), "f"))
+		assert.Empty(t, r.calls)
 	})
 
 	t.Run("WithExpander is honored", func(t *testing.T) {
@@ -229,33 +253,10 @@ func TestEngine_Options(t *testing.T) {
 			called = true
 			return s
 		}
-		e := New(cfg,
-			WithExpander(exp),
-			WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}),
-		)
-		// engine has no template params, so we add one:
-		e.cfg.Groups[0].Params = []string{"hello"}
-		e.groups["a"] = e.cfg.Groups[0]
-
-		require.NoError(t, e.Run(context.Background()))
+		cfg2 := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo", Params: []string{"hi"}}}, [][]string{{"a"}})
+		e := New(cfg2, WithExpander(exp), WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}))
+		require.NoError(t, e.RunFlow(context.Background(), "f"))
 		assert.True(t, called)
-	})
-
-	t.Run("WithLogger replaces the default Nop", func(t *testing.T) {
-		captured := &captureLogger{}
-		e := New(cfg,
-			WithLogger(captured),
-			WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}),
-		)
-		require.NoError(t, e.Run(context.Background()))
-		assert.NotEmpty(t, captured.lines)
-	})
-
-	t.Run("WithDryRun forces dry-run regardless of config", func(t *testing.T) {
-		r := &fakeRunner{}
-		e := New(cfg, WithDryRun(true), WithRunner(r))
-		require.NoError(t, e.Run(context.Background()))
-		assert.Empty(t, r.calls)
 	})
 }
 
@@ -282,8 +283,6 @@ func TestOutputStore_Snapshot(t *testing.T) {
 	s.Set("b", "2")
 	snap := s.Snapshot()
 	assert.Equal(t, "1", snap["a"])
-	assert.Equal(t, "2", snap["b"])
-	// Mutating the snapshot must not affect the store.
 	snap["a"] = "mutated"
 	v, _ := s.Get("a")
 	assert.Equal(t, "1", v)

@@ -1,0 +1,91 @@
+---
+# Migrated equivalent of config-valid-example-v1.yml in the same directory.
+#
+# Key differences:
+#   - version: 1 → version: 2
+#   - The single top-level `execution:` block is replaced by named entries
+#     under `flows:`. Each flow declares its own scheduling `mode:` and is
+#     invoked via `keepup run <flow>` (or the configured `default:`).
+#   - Steps inside a step-mode flow use `run: [...]` instead of `group: [...]`.
+#
+# The v2 schema lets a single file expose multiple compositions of the same
+# groups — here `update` (full daily flow), `brew` (brew-only), and `fish`
+# (fish-only). Groups themselves are untouched.
+
+version: 2
+
+settings:
+  logging:
+    level: debug
+    pretty: true
+  working-dir: /tmp
+  max-concurrency: 2
+
+groups:
+  - name: brew-update
+    description: "Execute brew update (verbose)"
+    command: brew
+    params: [update, -v]
+
+  - name: brew-upgrade
+    description: "Execute brew upgrade"
+    command: brew
+    params: [upgrade]
+
+  - name: brew-upgrade-casks
+    description: "Execute brew upgrade (casks)"
+    command: brew
+    params: [upgrade, --casks]
+
+  - name: brew-cleanup
+    description: "Execute brew cleanup"
+    command: brew
+    params: [cleanup]
+
+  - name: omf-update
+    description: "Update Oh My Fish"
+    command: omf
+    params: [update]
+    shell: /opt/homebrew/bin/fish
+
+  - name: omf-reload
+    description: "Reload Oh My Fish"
+    command: omf
+    params: [reload]
+    shell: /opt/homebrew/bin/fish
+
+  - name: fisher-update
+    description: "Update Fisher"
+    command: fisher
+    params: [update]
+    shell: /opt/homebrew/bin/fish
+
+default: update
+
+flows:
+  update:
+    description: "Full daily system update: brew + casks + cleanup + fish plugins"
+    mode: step
+    steps:
+      - run: [brew-update]
+      - run: [brew-upgrade]
+      - run: [brew-upgrade-casks]
+      - run: [brew-cleanup]
+      - run: [omf-update, fisher-update]   # parallel: independent fish managers
+      - run: [omf-reload]
+
+  brew:
+    description: "Just the brew portion (no fish/omf)"
+    mode: step
+    steps:
+      - run: [brew-update]
+      - run: [brew-upgrade]
+      - run: [brew-upgrade-casks]
+      - run: [brew-cleanup]
+
+  fish:
+    description: "Just the fish-shell portion (omf + fisher), then reload"
+    mode: step
+    steps:
+      - run: [omf-update, fisher-update]
+      - run: [omf-reload]

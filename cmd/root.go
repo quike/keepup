@@ -8,26 +8,32 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/engine"
 	"github.com/quike/keepup/internal/logger"
 )
 
-const appName = "keepup"
+const (
+	appName        = "keepup"
+	listKindFlows  = "flows"
+	listKindGroups = "groups"
+	noDescription  = "(no description)"
+	validateCmdUse = "validate"
+)
 
-// runtimeOpts holds the parsed CLI flags for a single Execute() invocation.
+// runtimeOpts carries the parsed CLI state for one Execute() invocation.
 // Centralizing state on a value (instead of package globals) lets tests run
 // in parallel and makes the CLI wiring side-effect free.
 type runtimeOpts struct {
 	configFile string
 	dryRun     bool
 	verbose    bool
-	groupName  string
 
 	cfg *config.Config
 	log logger.Logger
@@ -53,21 +59,11 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   appName,
-		Short: "Executes keepup commands",
-		Long:  "Keepup is a task runner that executes tasks based on a configuration file.",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := opts.load(stdout); err != nil {
-				return err
-			}
-			if err := opts.filterByGroup(); err != nil {
-				return err
-			}
-			e := engine.New(opts.cfg,
-				engine.WithLogger(opts.log),
-				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
-			)
-			return e.Run(cmd.Context())
-		},
+		Short: "Composable task runner with reusable groups and named flows",
+		Long: "Keepup runs YAML-declared groups of commands inside named flows. " +
+			"A flow is either a sequence of parallel waves (step mode) or a topologically " +
+			"scheduled set of groups (dag mode); data flows between groups via " +
+			"{{ output.<name> }} references.",
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -76,10 +72,107 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "", defaultHelp)
 	root.PersistentFlags().BoolVarP(&opts.dryRun, "dry-run", "d", false, "Dry run mode (no commands are executed)")
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "Verbose output")
-	root.Flags().StringVarP(&opts.groupName, "group", "g", "", "Group name to run (overrides config execution)")
 
+	root.AddCommand(newRunCmd(opts))
+	root.AddCommand(newListCmd(opts, stdout))
+	root.AddCommand(newValidateCmd(opts, stdout))
+	root.AddCommand(newGraphCmd(opts, stdout))
 	root.AddCommand(newVersionCmd())
 	return root
+}
+
+func newRunCmd(opts *runtimeOpts) *cobra.Command {
+	return &cobra.Command{
+		Use:   "run [flow]",
+		Short: "Execute a flow (uses the configured default when no flow is given)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opts.load(cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			var flowName string
+			if len(args) == 1 {
+				flowName = args[0]
+			}
+			e := engine.New(opts.cfg,
+				engine.WithLogger(opts.log),
+				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
+			)
+			return e.RunFlow(cmd.Context(), flowName)
+		},
+	}
+}
+
+func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list [flows|groups]",
+		Short: "List declared flows (default) or groups",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opts.load(cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			kind := listKindFlows
+			if len(args) == 1 {
+				kind = args[0]
+			}
+			switch kind {
+			case listKindFlows:
+				return printFlows(stdout, opts.cfg)
+			case listKindGroups:
+				return printGroups(stdout, opts.cfg)
+			default:
+				return fmt.Errorf("unknown list target %q (expected %q or %q)", kind, listKindFlows, listKindGroups)
+			}
+		},
+	}
+}
+
+func newValidateCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   validateCmdUse,
+		Short: "Parse and validate the config file without running anything",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := opts.load(cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "%s: ok (%d groups, %d flows)\n",
+				opts.configFile, len(opts.cfg.Groups), len(opts.cfg.Flows))
+			return nil
+		},
+	}
+}
+
+func printFlows(out io.Writer, cfg *config.Config) error {
+	names := make([]string, 0, len(cfg.Flows))
+	for n := range cfg.Flows {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		f := cfg.Flows[n]
+		marker := " "
+		if cfg.Default == n {
+			marker = "*"
+		}
+		desc := f.Description
+		if desc == "" {
+			desc = noDescription
+		}
+		fmt.Fprintf(out, "%s %-20s [%s] %s\n", marker, n, f.Mode, desc)
+	}
+	return nil
+}
+
+func printGroups(out io.Writer, cfg *config.Config) error {
+	for _, g := range cfg.Groups {
+		desc := g.Description
+		if desc == "" {
+			desc = noDescription
+		}
+		fmt.Fprintf(out, "  %-24s %s\n", g.Name, desc)
+	}
+	return nil
 }
 
 // load reads the config file and initializes the logger.
@@ -91,6 +184,7 @@ func (o *runtimeOpts) load(out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		o.configFile = path
 	}
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
@@ -104,26 +198,6 @@ func (o *runtimeOpts) load(out io.Writer) error {
 			return fmt.Errorf("dump config: %w", err)
 		}
 	}
-	return nil
-}
-
-// filterByGroup narrows the execution plan to a single group when --group is set.
-func (o *runtimeOpts) filterByGroup() error {
-	if o.groupName == "" {
-		return nil
-	}
-	found := false
-	for _, g := range o.cfg.Groups {
-		if g.Name == o.groupName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("group %q not found in config", o.groupName)
-	}
-	o.log.Info("filtering execution by group", "group", o.groupName)
-	o.cfg.Execution = []config.Step{{Group: []string{o.groupName}}}
 	return nil
 }
 

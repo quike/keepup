@@ -1,0 +1,316 @@
+# Configuration reference
+
+The keepup config is a single YAML document. By default it's read from
+`$HOME/.config/keepup/keepup.yml`; pass `-c` / `--config` to point at a
+different file.
+
+This document covers the **v2 schema**, which is the only one the current
+binary understands. For migrating from v1, see [FAQ](FAQ.md).
+
+---
+
+## Document shape
+
+```yaml
+version: 2 # required; the only accepted value
+settings: { ... } # optional global settings
+env: { ... } # optional global environment variables
+groups: [...] # atomic, reusable command units
+default: <flow> # optional; flow to run when `keepup run` has no argument
+flows: { ... } # one or more named pipelines composed of groups
+```
+
+Top-level keys at a glance:
+
+| Key        | Type   | Required | Purpose                                                |
+| ---------- | ------ | -------- | ------------------------------------------------------ |
+| `version`  | int    | yes      | Must be `2`. v1 is rejected with a clear error.        |
+| `settings` | map    | no       | Runtime knobs (logging, dry-run, concurrency, …).      |
+| `env`      | map    | no       | Global environment variables shared by every group.    |
+| `groups`   | list   | yes      | The atomic units the flows compose.                    |
+| `default`  | string | no       | Name of the flow to run when none is given on the CLI. |
+| `flows`    | map    | yes      | Named pipelines. At least one must be declared.        |
+
+---
+
+## `settings`
+
+```yaml
+settings:
+  dry-run: false # bool; default false. CLI --dry-run can override.
+  working-dir: /tmp # string; reserved for future per-task chdir support.
+  max-concurrency: 0 # int;   0 means unbounded.
+  logging:
+    level: info # trace | debug | info | warn | error
+    pretty: true # true = human; false = JSON lines.
+```
+
+| Field             | Default         | Notes                                                                                                                         |
+| ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `dry-run`         | `false`         | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
+| `working-dir`     | `""`            | Currently reserved. Not consumed by the runner yet.                                                                           |
+| `max-concurrency` | `0` (unbounded) | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
+| `logging.level`   | `info`          | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
+| `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line.                                                          |
+
+---
+
+## `env` — global environment
+
+A flat string-to-string map merged into every group's environment before
+per-group overrides:
+
+```yaml
+env:
+  AWS_REGION: us-east-1
+  LANG: en_US.UTF-8
+```
+
+Precedence (lowest → highest): process env, `env:` block, `groups[].env`.
+
+---
+
+## `groups`
+
+A `group` is **an atomic, reusable command**. Groups know nothing about flows;
+composition lives in flows.
+
+```yaml
+groups:
+  - name: build
+    description: "Compile the binary"
+    command: go
+    params: [build, -o, bin/keepup, ./]
+    env: # optional; merged on top of global env
+      CGO_ENABLED: "0"
+    shell: /opt/homebrew/bin/fish # optional; opts into shell mode (see below)
+```
+
+| Field         | Type       | Required | Purpose                                                                                                                 |
+| ------------- | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string     | yes      | Unique identifier. Referenced from flows and `{{ output.X }}`.                                                          |
+| `command`     | string     | yes      | The program/argv0 to execute.                                                                                           |
+| `params`      | `[]string` | no       | Arguments. Passed as a real argv list — **no shell parsing** by default.                                                |
+| `env`         | map        | no       | Per-group env overrides; applied on top of the global `env`.                                                            |
+| `shell`       | string     | no       | When non-empty, the named shell program runs `command + params` as a single shell-interpreted line (opt-in shell mode). |
+| `description` | string     | no       | Free text used by `keepup list groups`.                                                                                 |
+
+### Direct exec vs. shell mode
+
+By default keepup spawns `command` with `params` as a real argv list — no
+shell interprets the line, so spaces, `;`, `$(…)`, backticks, etc. are
+treated as literal data. This is safe and matches what users typically want.
+
+When you opt in by setting `shell:` to the path of a shell program
+(e.g. `/bin/sh`, `/opt/homebrew/bin/fish`), keepup joins
+`command + params` into one string and feeds it to that shell's `-c` flag.
+Use this only when you actually need shell features (pipes, expansions,
+`$()`, etc.).
+
+```yaml
+- name: count-lines
+  command: cat *.go | wc -l # only works because shell mode is on
+  shell: /bin/sh
+```
+
+On Windows, the shell flag is `/C` and the default shell falls back to
+`%COMSPEC%` or `cmd.exe`.
+
+### Referencing other groups' output
+
+A group's `command` or any of its `params` can include
+`{{ output.<other-group-name> }}`. At run time the placeholder is replaced
+with the captured stdout (trimmed of surrounding whitespace) of the
+referenced group:
+
+```yaml
+groups:
+  - name: build
+    command: echo
+    params: [bin/keepup-{{ output.version }}]
+  - name: version
+    command: git
+    params: [rev-parse, --short, HEAD]
+```
+
+Reference rules:
+
+- The referenced group must be part of the flow being executed.
+- **Step mode**: the referenced group must appear in an **earlier** step (not
+  the same step). Same-step references would race.
+- **DAG mode**: references determine scheduling order; cycles are rejected at
+  config-load.
+
+These rules are enforced at parse time (`keepup validate`), not at run time,
+so typos and ordering bugs surface immediately.
+
+---
+
+## `flows`
+
+A `flow` is a named pipeline that composes groups. Each flow picks a
+scheduling `mode`.
+
+```yaml
+flows:
+  <flow-name>:
+    description: "..." # optional, shown by `keepup list`
+    mode: step # "step" (default) or "dag"
+    steps: [...] # step mode only
+    run: [...] # dag mode only
+```
+
+You can declare multiple flows in one file — the same `groups` are typically
+reused across them.
+
+### Step mode (default)
+
+Steps run in declaration order. Within a step, the listed groups run in
+parallel; a barrier separates consecutive steps. Outputs from earlier steps
+are visible to later ones.
+
+```yaml
+flows:
+  ci:
+    description: "Linear CI flow"
+    mode: step
+    steps:
+      - run: [vet, build] # vet and build run concurrently
+      - run: [test] # test runs after both of step 1 finish
+      - run: [package]
+```
+
+Step mode is the right default: order is visible at a glance and barriers
+make behaviour predictable.
+
+### DAG mode
+
+DAG mode drops explicit steps. Groups schedule topologically from the data
+graph formed by `{{ output.X }}` references — a group starts the moment all
+groups it references have completed. Independent branches run in parallel
+automatically.
+
+```yaml
+flows:
+  ci-dag:
+    description: "Same shape, scheduled topologically"
+    mode: dag
+    run: [vet, build, test, package]
+```
+
+For DAG mode the engine validates that the data graph is **acyclic** before
+running anything.
+
+When should you use each?
+
+| Use case                                                               | Mode                                    |
+| ---------------------------------------------------------------------- | --------------------------------------- |
+| The order is part of your mental model; explicit barriers are valuable | step                                    |
+| You want maximum throughput and the data deps speak for themselves     | dag                                     |
+| You don't yet know the order — let references define it                | dag                                     |
+| You want to share groups across pipelines with different shapes        | either; multiple flows in the same file |
+
+Both modes share the same `Runner`, output capture, env merging,
+`max-concurrency`, and `--dry-run` semantics; they only differ at
+scheduling time.
+
+---
+
+## `default`
+
+```yaml
+default: ci
+```
+
+The flow to run when `keepup run` is invoked without an argument. Must point
+at an existing flow; otherwise the file is rejected at parse time.
+
+---
+
+## CLI subcommands
+
+```sh
+keepup run [flow]            # run the named flow, or the default
+keepup list                  # show declared flows + descriptions
+keepup list groups           # show declared groups
+keepup validate              # parse + validate; no execution
+keepup graph [flow]          # emit a Mermaid diagram of the data DAG
+keepup version
+```
+
+Global flags:
+
+| Flag                  | Purpose                                                                    |
+| --------------------- | -------------------------------------------------------------------------- |
+| `-c, --config <path>` | Override the config-file path (defaults to `~/.config/keepup/keepup.yml`). |
+| `-d, --dry-run`       | Skip the runner; log what would run. Stacks on top of `settings.dry-run`.  |
+| `-v, --verbose`       | Dump the parsed config before running.                                     |
+
+`keepup graph <flow>` prints a Mermaid `graph TD` showing the data DAG that
+emerges from the `{{ output.X }}` references — useful as a sanity check
+regardless of whether you use step or dag mode.
+
+---
+
+## Worked example
+
+A full file that exposes three flows over the same set of groups:
+
+```yaml
+version: 2
+
+settings:
+  logging: { level: info, pretty: true }
+  max-concurrency: 4
+
+env:
+  GOFLAGS: "-trimpath"
+
+groups:
+  - { name: vet, command: go, params: [vet, ./...] }
+  - { name: build, command: go, params: [build, -o, bin/keepup, ./] }
+  - { name: test, command: go, params: [test, -race, ./...] }
+  - {
+      name: package,
+      command: tar,
+      params: [czf, dist/keepup.tar.gz, bin/keepup],
+    }
+
+default: ci
+
+flows:
+  ci:
+    description: "Vet+build in parallel, then test, then package"
+    mode: step
+    steps:
+      - run: [vet, build]
+      - run: [test]
+      - run: [package]
+
+  ci-dag:
+    description: "Same pipeline, scheduled by data deps"
+    mode: dag
+    run: [vet, build, test, package]
+
+  quick:
+    description: "Just build, for inner-loop iteration"
+    mode: step
+    steps:
+      - run: [build]
+```
+
+Run with:
+
+```sh
+keepup run            # uses default → ci
+keepup run quick      # fast iteration
+keepup run ci-dag     # try the DAG scheduler
+keepup graph ci-dag   # visualize what dag mode will do
+```
+
+---
+
+## See also
+
+- [FAQ](FAQ.md) — including v1 → v2 migration walkthrough
+- [Usage](USAGE.md) — short tour of common commands

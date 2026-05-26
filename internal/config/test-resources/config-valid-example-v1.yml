@@ -1,0 +1,61 @@
+---
+# A real-world v1 keepup file. Kept as a fixture so the migration test can
+# assert that v1 is rejected with a clear error, AND so users have a
+# side-by-side reference for what their old file used to look like.
+#
+# To migrate, see keepup-v2.yml in this directory.
+version: 1
+
+settings:
+  logging:
+    level: debug
+    pretty: true
+  working-dir: /tmp
+  max-concurrency: 2
+
+groups:
+  - name: brew-update
+    description: "Execute brew update (verbose)"
+    command: "brew"
+    params: ["update", "-v"]
+
+  - name: brew-upgrade
+    description: "Execute brew upgrade"
+    command: "brew"
+    params: ["upgrade"]
+
+  - name: brew-upgrade-casks
+    description: "Execute brew upgrade (casks)"
+    command: "brew"
+    params: ["upgrade", "--casks"]
+
+  - name: brew-cleanup
+    description: "Execute brew cleanup"
+    command: "brew"
+    params: ["cleanup"]
+
+  - name: omf-update
+    description: "Update Oh My Fish"
+    command: "omf"
+    params: ["update"]
+    shell: /opt/homebrew/bin/fish
+
+  - name: omf-reload
+    description: "Reload Oh My Fish"
+    command: "omf"
+    params: ["reload"]
+    shell: /opt/homebrew/bin/fish
+
+  - name: fisher-update
+    description: "Update Fisher"
+    command: "fisher"
+    params: ["update"]
+    shell: /opt/homebrew/bin/fish
+
+execution:
+  - group: ["brew-update"]
+  - group: ["brew-upgrade"]
+  - group: ["brew-upgrade-casks"]
+  - group: ["brew-cleanup"]
+  - group: ["omf-update", "fisher-update"]
+  - group: ["omf-reload"]

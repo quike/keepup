@@ -27,7 +27,20 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: make build
+      - name: Release outputs
+        run: |
+          echo "release-published: ${{ needs.release.outputs.release-published }}"
+          echo "release-version:   ${{ needs.release.outputs.release-version }}"
+          echo "release-major:     ${{ needs.release.outputs.release-major }}"
+          echo "release-minor:     ${{ needs.release.outputs.release-minor }}"
+          echo "release-patch:     ${{ needs.release.outputs.release-patch }}"
+          echo "release-type:      ${{ needs.release.outputs.release-type }}"
+          echo "release-git-head:  ${{ needs.release.outputs.release-git-head }}"
+          echo "release-git-tag:   ${{ needs.release.outputs.release-git-tag }}"
+      - name: Build
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.release-version }}
+        run: make build VERSION="${RELEASE_VERSION:-0.0.0}"
       - uses: codecov/codecov-action@v6
         with:
           files: target/coverage.out

@@ -1,0 +1,110 @@
+package logger
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestNewWithWriter_LevelsAndKVs(t *testing.T) {
+	tests := []struct {
+		name      string
+		level     string
+		emit      func(l Logger)
+		wantSub   string
+		notWanted string
+	}{
+		{
+			name:    "info emits at info level",
+			level:   "info",
+			emit:    func(l Logger) { l.Info("hello", "k", "v") },
+			wantSub: `"k":"v"`,
+		},
+		{
+			name:      "debug suppressed at info",
+			level:     "info",
+			emit:      func(l Logger) { l.Debug("debugging") },
+			notWanted: "debugging",
+		},
+		{
+			name:    "invalid level falls back to info, still logs info",
+			level:   "not-a-level",
+			emit:    func(l Logger) { l.Info("still here") },
+			wantSub: "still here",
+		},
+		{
+			name:    "odd-length kv is tolerated",
+			level:   "info",
+			emit:    func(l Logger) { l.Info("ok", "key-without-val") },
+			wantSub: "ok",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewWithWriter(&buf, tc.level, false)
+			tc.emit(l)
+			out := buf.String()
+			if tc.wantSub != "" {
+				assert.True(t, strings.Contains(out, tc.wantSub), "want %q in %q", tc.wantSub, out)
+			}
+			if tc.notWanted != "" {
+				assert.False(t, strings.Contains(out, tc.notWanted), "did not want %q in %q", tc.notWanted, out)
+			}
+		})
+	}
+}
+
+func TestNop(t *testing.T) {
+	l := Nop()
+	// just exercising the surface; should not panic
+	l.Debug("x")
+	l.Info("x")
+	l.Warn("x")
+	l.Error("x")
+	l.Trace("x")
+}
+
+func TestAllLevelsEmit(t *testing.T) {
+	tests := []struct {
+		name  string
+		emit  func(Logger)
+		level string
+		want  string
+	}{
+		{"warn", func(l Logger) { l.Warn("w") }, "trace", `"warn"`},
+		{"error", func(l Logger) { l.Error("e") }, "trace", `"error"`},
+		{"trace", func(l Logger) { l.Trace("t") }, "trace", `"trace"`},
+		{"debug", func(l Logger) { l.Debug("d") }, "trace", `"debug"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewWithWriter(&buf, tc.level, false)
+			tc.emit(l)
+			assert.Contains(t, buf.String(), tc.want)
+		})
+	}
+}
+
+func TestNew_DefaultsToStdoutWithoutPanicking(t *testing.T) {
+	// Just exercise the New() constructor path so it gets covered. We don't
+	// assert on stdout contents to avoid polluting test output.
+	l := New("info", false)
+	assert.NotNil(t, l)
+
+	lp := New("info", true)
+	assert.NotNil(t, lp)
+}
+
+func TestEmit_NonStringKeyIsSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewWithWriter(&buf, "info", false)
+	// First "key" is an int, not a string — should be silently skipped.
+	l.Info("ok", 42, "ignored", "k", "v")
+	out := buf.String()
+	assert.Contains(t, out, `"k":"v"`)
+	assert.NotContains(t, out, `"42"`)
+}

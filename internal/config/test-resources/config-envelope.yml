@@ -1,0 +1,47 @@
+---
+# Exercises the timeout/retries control envelope across its edges:
+#   - a step that inherits both flow defaults
+#   - a step that overrides timeout but leaves retries at 0 (which means
+#     "inherit", a documented limitation — you cannot override down to 0)
+#   - a step that overrides both
+#   - a dag flow that has no steps, so the flow-level envelope is the only knob
+#   - a flow with no envelope at all
+version: 2
+
+settings:
+  logging:
+    level: info
+    pretty: true
+
+groups:
+  - { name: a, command: echo, params: ["a"] }
+  - { name: b, command: echo, params: ["b"] }
+  - { name: c, command: echo, params: ["c"] }
+
+default: release
+
+flows:
+  release:
+    description: "Flow envelope with per-step overrides and inherits"
+    timeout: 1m
+    retries: 2
+    steps:
+      - run: [a] # inherits flow: 1m / 2
+      - run: [b]
+        timeout: 10s # override timeout; retries 0 → inherit flow's 2
+        retries: 0
+      - run: [c]
+        timeout: 5s # override both
+        retries: 5
+
+  fast-dag:
+    description: "Dag flow uses the flow-level envelope (no steps)"
+    mode: dag
+    timeout: 30s
+    retries: 1
+    run: [a, b, c]
+
+  bare:
+    description: "No envelope at all"
+    steps:
+      - run: [a]

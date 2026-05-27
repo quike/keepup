@@ -131,6 +131,46 @@ func TestEngine_DAGFlow_UsesFlowEnvelope(t *testing.T) {
 	assert.Equal(t, int32(2), atomic.LoadInt32(&r.calls), "dag mode applies the flow-level retries")
 }
 
+// TestResolveEnvelope_FromFixture drives resolution from the real
+// config-envelope.yml fixture, pinning every edge (inherit, partial override,
+// full override, dag flow-level, no-envelope) against an actual file.
+func TestResolveEnvelope_FromFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../config/test-resources/config-envelope.yml")
+	require.NoError(t, err)
+
+	rel := cfg.Flows["release"]
+	t.Run("step inherits both flow defaults", func(t *testing.T) {
+		env := resolveEnvelope(&rel, &rel.Steps[0])
+		assert.Equal(t, time.Minute, env.timeout)
+		assert.Equal(t, 2, env.retries)
+	})
+	t.Run("step overrides timeout, retries 0 inherits flow", func(t *testing.T) {
+		env := resolveEnvelope(&rel, &rel.Steps[1])
+		assert.Equal(t, 10*time.Second, env.timeout)
+		assert.Equal(t, 2, env.retries, "retries: 0 means inherit, not override-to-zero")
+	})
+	t.Run("step overrides both", func(t *testing.T) {
+		env := resolveEnvelope(&rel, &rel.Steps[2])
+		assert.Equal(t, 5*time.Second, env.timeout)
+		assert.Equal(t, 5, env.retries)
+	})
+
+	t.Run("dag flow uses flow-level envelope", func(t *testing.T) {
+		dag := cfg.Flows["fast-dag"]
+		env := resolveEnvelope(&dag, nil)
+		assert.Equal(t, 30*time.Second, env.timeout)
+		assert.Equal(t, 1, env.retries)
+	})
+
+	t.Run("bare flow has no envelope", func(t *testing.T) {
+		bare := cfg.Flows["bare"]
+		env := resolveEnvelope(&bare, &bare.Steps[0])
+		assert.Equal(t, time.Duration(0), env.timeout)
+		assert.Equal(t, 0, env.retries)
+	})
+}
+
 // withStepEnvelope sets the timeout/retries envelope on the first step of the
 // test flow "f", in place.
 func withStepEnvelope(cfg *config.Config, timeout string, retries int) {

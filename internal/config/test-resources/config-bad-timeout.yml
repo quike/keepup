@@ -1,0 +1,13 @@
+---
+# Invalid: the flow timeout is not a parseable Go duration. LoadConfig must
+# reject it at parse time.
+version: 2
+
+groups:
+  - { name: a, command: echo }
+
+flows:
+  f:
+    timeout: not-a-duration
+    steps:
+      - run: [a]

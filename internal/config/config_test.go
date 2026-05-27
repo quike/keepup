@@ -317,6 +317,42 @@ flows:
 	}
 }
 
+func TestLoadConfig_EnvelopeResources(t *testing.T) {
+	t.Run("valid envelope fixture parses with all edges", func(t *testing.T) {
+		cfg, err := LoadConfig("./test-resources/config-envelope.yml")
+		require.NoError(t, err)
+
+		rel := cfg.Flows["release"]
+		assert.Equal(t, "1m", rel.Timeout)
+		assert.Equal(t, 2, rel.Retries)
+		require.Len(t, rel.Steps, 3)
+		// step a: no overrides
+		assert.Empty(t, rel.Steps[0].Timeout)
+		assert.Equal(t, 0, rel.Steps[0].Retries)
+		// step b: timeout override, retries left at 0
+		assert.Equal(t, "10s", rel.Steps[1].Timeout)
+		assert.Equal(t, 0, rel.Steps[1].Retries)
+		// step c: both overridden
+		assert.Equal(t, "5s", rel.Steps[2].Timeout)
+		assert.Equal(t, 5, rel.Steps[2].Retries)
+
+		dag := cfg.Flows["fast-dag"]
+		assert.Equal(t, ModeDAG, dag.Mode)
+		assert.Equal(t, "30s", dag.Timeout)
+		assert.Equal(t, 1, dag.Retries)
+
+		bare := cfg.Flows["bare"]
+		assert.Empty(t, bare.Timeout)
+		assert.Equal(t, 0, bare.Retries)
+	})
+
+	t.Run("bad-timeout fixture is rejected", func(t *testing.T) {
+		_, err := LoadConfig("./test-resources/config-bad-timeout.yml")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid timeout")
+	})
+}
+
 func TestLoadConfig(t *testing.T) {
 	t.Run("valid file", func(t *testing.T) {
 		dir := t.TempDir()

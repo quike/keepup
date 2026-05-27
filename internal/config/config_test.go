@@ -586,7 +586,22 @@ flows:
       - run: [a]
         when: '{{ bogusfunc }}'
 `
-	for name, yaml := range map[string]string{"same-step ref": sameStep, "malformed": malformed} {
+	// when references a group that exists but is not part of this flow.
+	notInFlow := `version: 2
+groups:
+  - {name: a, command: echo}
+  - {name: outsider, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ output "outsider" }}'
+`
+	for name, yaml := range map[string]string{
+		"same-step ref":   sameStep,
+		"malformed":       malformed,
+		"ref not in flow": notInFlow,
+	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewConfig([]byte(yaml))
 			require.Error(t, err)

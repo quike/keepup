@@ -117,6 +117,17 @@ func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []strin
 	return r.outputs[g.Name], nil
 }
 
+func TestEngine_Template_BadCommandFailsGroup(t *testing.T) {
+	t.Parallel()
+	cfg := stepFlowCfg(t, []config.Group{
+		{Name: "a", Command: `{{ bogusfunc }}`},
+	}, [][]string{{"a"}})
+	e := New(cfg, WithRunner(&fakeRunner{}))
+	err := e.RunFlow(context.Background(), "f")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expand command")
+}
+
 // captureCommandRunner records the (expanded) command of the last group run
 // and echoes its first param as output so downstream refs resolve.
 type captureCommandRunner struct{ lastCommand string }

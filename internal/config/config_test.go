@@ -525,6 +525,30 @@ func TestReferenceValidation(t *testing.T) {
 	}
 }
 
+func TestNewConfig_RejectsMalformedTemplate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "step mode malformed param template",
+			yaml: "version: 2\ngroups:\n  - name: a\n    command: echo\n    params: ['{{ bogusfunc }}']\nflows:\n  f:\n    steps:\n      - run: [a]\n", //nolint:lll // inline YAML fixture
+		},
+		{
+			name: "dag mode malformed command template",
+			yaml: "version: 2\ngroups:\n  - name: a\n    command: '{{ output \"x\" '\nflows:\n  f:\n    mode: dag\n    run: [a]\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewConfig([]byte(tc.yaml))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "parse template")
+		})
+	}
+}
+
 func TestExtractRefs(t *testing.T) {
 	t.Parallel()
 	g := &Group{

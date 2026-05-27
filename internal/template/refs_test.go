@@ -23,6 +23,8 @@ func TestRefs(t *testing.T) {
 		{"inside if", `{{ if output "a" }}x{{ end }}`, []string{"a"}},
 		{"parenthesized in if", `{{ if (output "a") }}x{{ end }}`, []string{"a"}},
 		{"inside range", `{{ range output "a" }}{{ . }}{{ end }}`, []string{"a"}},
+		{"inside with", `{{ with output "a" }}{{ . }}{{ end }}`, []string{"a"}},
+		{"with refs both", `{{ with output "a" }}{{ output "b" }}{{ end }}`, []string{"a", "b"}},
 		{"if/else both", `{{ if output "a" }}{{ output "b" }}{{ else }}{{ output "c" }}{{ end }}`, []string{"a", "b", "c"}},
 		{"env not counted as ref", `{{ env "HOME" }}`, nil},
 		{"mixed legacy and func", `{{ output.a }} {{ output "b" }}`, []string{"a", "b"}},

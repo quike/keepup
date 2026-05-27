@@ -137,6 +137,7 @@ func TestExpand_Errors(t *testing.T) {
 		{"unclosed action", "{{ output \"x\" "},
 		{"unknown function", `{{ bogusfunc "x" }}`},
 		{"bad syntax", `{{ if }}`},
+		{"render-time failure (sprig fail)", `{{ fail "boom" }}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

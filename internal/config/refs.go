@@ -59,7 +59,7 @@ func (c *Config) checkFlowRefs(flowName string, f *Flow, members []string) error
 	case ModeStep:
 		return c.checkStepRefs(flowName, f, memberSet)
 	case ModeDAG:
-		return c.checkDAGRefs(flowName, members, memberSet)
+		return c.checkDAGRefs(flowName, f, members, memberSet)
 	}
 	return nil
 }
@@ -124,13 +124,28 @@ func (c *Config) checkWhenRefs(flowName string, stepIdx int, when string, member
 	return nil
 }
 
-func (c *Config) checkDAGRefs(flowName string, members []string, memberSet map[string]struct{}) error {
+func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, memberSet map[string]struct{}) error {
 	adj := make(map[string][]string, len(members))
 	inDeg := make(map[string]int, len(members))
 	for _, m := range members {
 		inDeg[m] = 0
 	}
-	for _, m := range members {
+	addEdge := func(ref, m string) error {
+		if _, ok := memberSet[ref]; !ok {
+			return fmt.Errorf(
+				"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
+				flowName, m, ref, ref,
+			)
+		}
+		if ref == m {
+			return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+		}
+		adj[ref] = append(adj[ref], m)
+		inDeg[m]++
+		return nil
+	}
+	for i := range f.Run {
+		m := f.Run[i].Group
 		g := c.GroupByName(m)
 		if g == nil {
 			return fmt.Errorf("flow %q: group %q is not defined", flowName, m)
@@ -140,17 +155,21 @@ func (c *Config) checkDAGRefs(flowName string, members []string, memberSet map[s
 			return fmt.Errorf("flow %q: %w", flowName, err)
 		}
 		for _, ref := range refs {
-			if _, ok := memberSet[ref]; !ok {
-				return fmt.Errorf(
-					"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
-					flowName, m, ref, ref,
-				)
+			if err := addEdge(ref, m); err != nil {
+				return err
 			}
-			if ref == m {
-				return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+		}
+		// when: references create edges exactly like command/param refs.
+		if w := f.Run[i].When; w != "" {
+			whenRefs, werr := template.Refs(w)
+			if werr != nil {
+				return fmt.Errorf("flow %q: group %q: when: %w", flowName, m, werr)
 			}
-			adj[ref] = append(adj[ref], m)
-			inDeg[m]++
+			for _, ref := range whenRefs {
+				if err := addEdge(ref, m); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return topoCheck(flowName, members, adj, inDeg)

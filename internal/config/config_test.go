@@ -738,6 +738,71 @@ flows:
 	}
 }
 
+func TestDAGWhenRefValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		doc     string
+		wantErr string
+	}{
+		{
+			name: "when ref to flow member is ok",
+			doc: `version: 2
+groups:
+  - {name: test, command: echo}
+  - {name: deploy, command: echo}
+flows:
+  ci:
+    mode: dag
+    run:
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'`,
+		},
+		{
+			name: "when ref to non-member is rejected",
+			doc: `version: 2
+groups:
+  - {name: deploy, command: echo}
+  - {name: lint, command: echo}
+flows:
+  ci:
+    mode: dag
+    run:
+      - group: deploy
+        when: '{{ output "lint" }}'`,
+			wantErr: "is not part of this flow",
+		},
+		{
+			name: "when ref forming a cycle is rejected",
+			doc: `version: 2
+groups:
+  - {name: a, command: 'echo {{ output "b" }}'}
+  - {name: b, command: echo}
+flows:
+  ci:
+    mode: dag
+    run:
+      - a
+      - group: b
+        when: '{{ output "a" }}'`,
+			wantErr: "cycle",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewConfig([]byte(tc.doc))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 func TestFlowMembersDAGFromRunEntries(t *testing.T) {
 	t.Parallel()
 	f := Flow{

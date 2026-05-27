@@ -277,6 +277,42 @@ Both modes share the same `Runner`, output capture, env merging,
 `max-concurrency`, and `--dry-run` semantics; they only differ at
 scheduling time.
 
+### Timeout and retries
+
+A flow can declare a control envelope that wraps each group's command run:
+
+```yaml
+flows:
+  release:
+    timeout: 10m # default per-group timeout for the whole flow
+    retries: 1 # default retries on failure
+    steps:
+      - run: [build]
+        timeout: 5m # override for this wave
+        retries: 2
+      - run: [smoke]
+        timeout: 30s
+```
+
+| Field | Where | Meaning |
+|-------|-------|---------|
+| `timeout` | flow and/or step | A Go duration (`30s`, `5m`, `1h`). Each command **attempt** is cancelled if it exceeds this. Empty/absent = no timeout. |
+| `retries` | flow and/or step | Number of **additional** attempts after the first failure. `0` = no retry. |
+
+Resolution: a step's non-empty `timeout` / non-zero `retries` override the
+flow defaults; otherwise the flow values apply. In **dag mode** there are no
+steps, so the flow-level values are the only envelope.
+
+Semantics:
+
+- The envelope wraps only the **command run** — gating predicates (`require`,
+  `skip-if`) and cache lookups are not retried or timed out.
+- Each retry attempt gets its own fresh timeout.
+- Between attempts there is a short backoff (`base × attempt`); it respects
+  Ctrl-C / context cancellation.
+- A cache write happens only after a successful attempt, so a timed-out or
+  failed run never poisons the cache.
+
 ---
 
 ## `default`

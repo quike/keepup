@@ -7,14 +7,17 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/plan"
 )
 
 // runDAGPlan runs the topological closure of the plan. A group starts as soon
 // as every group it references via {{ output.X }} has finished. The classical
 // Kahn-style ready queue is layered on top of errgroup so cancellation and
-// max-concurrency carry over without bespoke synchronization.
-func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan) error {
+// max-concurrency carry over without bespoke synchronization. Every group runs
+// under the flow-level envelope (dag mode has no per-step overrides).
+func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow) error {
+	env := resolveEnvelope(flow, nil)
 	// indeg tracks unresolved predecessors per group. It is mutated by the
 	// scheduler goroutine only.
 	indeg := make(map[string]int, len(p.Members))
@@ -44,7 +47,7 @@ func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan) error {
 			snapMu.RLock()
 			baseline := cloneSnapshot(snap)
 			snapMu.RUnlock()
-			if err := e.runGroup(gctx, &group, baseline); err != nil {
+			if err := e.runGroup(gctx, &group, baseline, env); err != nil {
 				return err
 			}
 			if v, ok := e.outputs.Get(name); ok {

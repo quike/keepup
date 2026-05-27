@@ -207,6 +207,18 @@ The first error in a step (step mode) or anywhere in the DAG (dag mode)
 cancels its siblings via the shared `errgroup` context. The flow then
 returns the wrapped error. Subsequent steps are not started.
 
+### How do timeouts and retries work?
+
+Declare them on a flow (the default for every group) and/or on a step (an
+override for that wave). `timeout` is a Go duration applied to each command
+**attempt**; `retries` is the number of additional attempts after the first
+failure. They wrap only the command run — `require`/`skip-if` predicates and
+cache lookups are never retried or timed out. Each attempt gets a fresh
+timeout, there's a short backoff between attempts (which respects Ctrl-C), and
+the cache is written only on success, so a failed/timed-out run can't poison
+it. In dag mode there are no steps, so the flow-level values are the only
+envelope.
+
 ---
 
 ## Caching and gating

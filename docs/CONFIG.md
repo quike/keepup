@@ -155,10 +155,10 @@ so typos and ordering bugs surface immediately.
 [sprig](https://masterminds.github.io/sprig/) function library, plus two
 keepup helpers:
 
-| Function | Returns |
-|----------|---------|
-| `output "name"` | The captured stdout of group `name` (whitespace-trimmed). |
-| `env "KEY"` | A value from the merged keepup environment (global `env:` + group `env:`). |
+| Function        | Returns                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| `output "name"` | The captured stdout of group `name` (whitespace-trimmed).                  |
+| `env "KEY"`     | A value from the merged keepup environment (global `env:` + group `env:`). |
 
 ```yaml
 groups:
@@ -168,9 +168,9 @@ groups:
   - name: tag
     command: echo
     params:
-      - 'release-{{ output "version" }}'        # function form
-      - '{{ output "version" | upper }}'         # sprig pipe
-      - '{{ env "CI" | default "local" }}'       # default when unset
+      - 'release-{{ output "version" }}' # function form
+      - '{{ output "version" | upper }}' # sprig pipe
+      - '{{ env "CI" | default "local" }}' # default when unset
 ```
 
 Backward compatibility: the original `{{ output.<name> }}` form still works —

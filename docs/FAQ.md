@@ -236,7 +236,7 @@ refreshes the entry.
 
 Under `settings.cache-dir` (default `.keepup-cache`), one JSON file per group
 containing the fingerprint and the captured output. It's a build artifact —
-add it to `.gitignore`. You *can* point `cache-dir` at a shared volume to
+add it to `.gitignore`. You _can_ point `cache-dir` at a shared volume to
 share hits across machines or CI runners, since the fingerprint is
 content-based.
 
@@ -264,11 +264,11 @@ real question. They compose — `require` → `skip-if` → `cache` → run.
 
 A `cache` hit replays the stored output. A `skip-if` skip publishes the last
 cached output if the group also has a `cache:` block, otherwise an empty
-string. Downstream references always resolve to *something*, never an error.
+string. Downstream references always resolve to _something_, never an error.
 
 ### Do predicates and caching run during `--dry-run`?
 
-No. Dry-run logs what *would* happen and evaluates neither predicates nor the
+No. Dry-run logs what _would_ happen and evaluates neither predicates nor the
 cache, so it never touches disk or spawns shells.
 
 ---

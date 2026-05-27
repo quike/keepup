@@ -1,0 +1,58 @@
+---
+# Exercises the template engine across its forms:
+#   - legacy {{ output.X }} substring form (backward compatibility)
+#   - the {{ output "X" }} function form
+#   - sprig pipes ({{ output "X" | trunc 7 }})
+#   - the env function with a sprig default
+#   - a templated command (not just params)
+version: 2
+
+env:
+  CI: "true"
+
+groups:
+  - name: producer
+    description: "Produces a value the consumers reference"
+    command: echo
+    params: ["abcdef1234567890"]
+
+  - name: legacy-consumer
+    description: "Uses the legacy {{ output.X }} form"
+    command: echo
+    params: ["sha={{ output.producer }}"]
+
+  - name: func-consumer
+    description: "Uses the function form"
+    command: echo
+    params: ['sha={{ output "producer" }}']
+
+  - name: sprig-consumer
+    description: "Uses a sprig pipe"
+    command: echo
+    params: ['short={{ output "producer" | trunc 7 }}']
+
+  - name: env-consumer
+    description: "Uses env with a sprig default"
+    command: echo
+    params: ['ci={{ env "CI" | default "local" }}']
+
+  - name: cmd-consumer
+    description: "Templated command, not just params"
+    command: 'echo-{{ output "producer" | trunc 3 }}'
+
+default: pipeline
+
+flows:
+  pipeline:
+    description: "Producer first, then every templating form consumes it"
+    mode: step
+    steps:
+      - run: [producer]
+      - run:
+          [
+            legacy-consumer,
+            func-consumer,
+            sprig-consumer,
+            env-consumer,
+            cmd-consumer,
+          ]

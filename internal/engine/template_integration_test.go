@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,6 +78,43 @@ func TestEngine_Template_BadTemplateFailsGroup(t *testing.T) {
 	err := e.RunFlow(context.Background(), "f")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expand param")
+}
+
+func TestEngine_Template_FromFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../config/test-resources/config-template.yml")
+	require.NoError(t, err)
+
+	r := &recordingRunner{outputs: map[string]string{"producer": "abcdef1234567890\n"}}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), "pipeline"))
+
+	assert.Equal(t, "sha=abcdef1234567890", r.params["legacy-consumer"])
+	assert.Equal(t, "sha=abcdef1234567890", r.params["func-consumer"])
+	assert.Equal(t, "short=abcdef1", r.params["sprig-consumer"])
+	assert.Equal(t, "ci=true", r.params["env-consumer"])
+	// cmd-consumer templates its command, not its params.
+	assert.Equal(t, "echo-abc", r.commands["cmd-consumer"])
+}
+
+// recordingRunner records the expanded command and joined params per group.
+type recordingRunner struct {
+	mu       sync.Mutex
+	outputs  map[string]string
+	params   map[string]string
+	commands map[string]string
+}
+
+func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.params == nil {
+		r.params = map[string]string{}
+		r.commands = map[string]string{}
+	}
+	r.params[g.Name] = strings.Join(params, ",")
+	r.commands[g.Name] = g.Command
+	return r.outputs[g.Name], nil
 }
 
 // captureCommandRunner records the (expanded) command of the last group run

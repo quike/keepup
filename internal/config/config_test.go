@@ -353,6 +353,26 @@ func TestLoadConfig_EnvelopeResources(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_TemplateResource(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-template.yml")
+	require.NoError(t, err)
+	require.Len(t, cfg.Groups, 6)
+
+	// Every templating form must register "producer" as a reference so the
+	// flow validates (producer is in an earlier step) and the DAG is correct.
+	for _, name := range []string{"legacy-consumer", "func-consumer", "sprig-consumer", "cmd-consumer"} {
+		refs, rerr := ExtractRefs(cfg.GroupByName(name))
+		require.NoError(t, rerr)
+		assert.Equal(t, []string{"producer"}, refs, "group %q", name)
+	}
+
+	// env-consumer references no group (only env), so it has no deps.
+	refs, err := ExtractRefs(cfg.GroupByName("env-consumer"))
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
 func TestLoadConfig(t *testing.T) {
 	t.Run("valid file", func(t *testing.T) {
 		dir := t.TempDir()

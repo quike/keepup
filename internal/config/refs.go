@@ -35,7 +35,9 @@ func ExtractRefs(g *Group) ([]string, error) {
 //
 //   - every {{ output.X }} must point to a group that appears earlier in the
 //     same flow (step mode: in an earlier step; dag mode: in the flow's run
-//     set, with the resulting data DAG being acyclic).
+//     set, with the resulting data DAG being acyclic — including references
+//     inside `when:` predicates, which are treated as graph edges and
+//     cycle-checked).
 //   - dag mode additionally rejects cycles.
 //
 // It is invoked from normalizeAndValidate so a single LoadConfig surfaces

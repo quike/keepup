@@ -308,7 +308,6 @@ and sprig) and is **falsey** — and therefore skips the step — when it render
 to `""`, `false`, `0`, `no`, or `off`. It is evaluated against the outputs of
 **earlier** steps plus the environment; referencing a same-step or later group
 is rejected at config-load. A skipped step's groups produce no output.
-`when:` applies to step mode only (dag mode has no steps).
 
 ### DAG mode
 
@@ -327,6 +326,45 @@ flows:
 
 For DAG mode the engine validates that the data graph is **acyclic** before
 running anything.
+
+#### Per-group `when:` in dag mode
+
+In dag mode each `run:` entry is either a bare group name (string) or a map
+with `group:` and `when:` keys:
+
+```yaml
+flows:
+  ci:
+    mode: dag
+    run:
+      - build
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'
+      - report
+```
+
+The map form accepts **only** `group` and `when` — no `command`, `params`, or
+other group-definition keys. Those fields belong on the group definition in
+`groups:`. An unexpected key is a config error at load time.
+
+`group:` is the name of a group already declared in the top-level `groups:`
+list (no inline definitions). `when:` follows the same template engine and
+falsey set as step-mode `when:` (`""`, `"false"`, `"0"`, `"no"`, `"off"`).
+
+**`when:` references create scheduling edges.** If `when: '{{ eq (output "x")
+"pass" }}'` references group `x`, then `x` becomes a predecessor in the data
+graph — it is guaranteed to finish before the predicate is evaluated, and the
+reference participates in the acyclic-graph check (cycle detection applies).
+
+**Cascade skip.** When a group is skipped by its `when:`, every group
+downstream of it — anything that depends on its output, transitively — is also
+skipped. A group cannot run on a missing producer's output. Cascade-skipped
+groups report `"reason":"upstream \"<name>\" skipped"` in their `group.end`
+event. A skip is not a failure: the flow can still end with `"status":"ok"`.
+
+Existing bare-string `run:` entries are unchanged — the map form is purely
+additive.
 
 When should you use each?
 

@@ -27,6 +27,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **Caching**              | Per-group `cache: { reads, writes }` fingerprints inputs (hash or mtime) and skips unchanged work, replaying stored output. |
 | **Watch mode**           | `keepup watch` re-runs a flow on file changes (using each group's `cache.reads`); caching makes unaffected groups no-ops.   |
 | **Gating**               | `require:` (must pass) and `skip-if:` (skip when already done) predicates short-circuit a group before it runs.             |
+| **Conditionals**         | `when:` skips a step (step mode) or a single dag-mode group (dag mode); skipping a dag group cascades to all its dependents. |
 | **Timeouts & retries**   | Per-step / per-flow `timeout` and `retries` envelope around each command attempt, with backoff.                             |
 | **Safe execution**       | Commands run as real argv by default (no shell injection); opt into a shell per group with `shell:`.                        |
 | **Env layering**         | Global `env:` plus per-group overrides, merged over the process environment.                                                |

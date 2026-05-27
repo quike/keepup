@@ -56,11 +56,15 @@ func stepFlowCfg(t *testing.T, groups []config.Group, steps [][]string) *config.
 }
 
 func dagFlowCfg(_ *testing.T, groups []config.Group, run []string) *config.Config {
+	entries := make([]config.RunEntry, len(run))
+	for i, name := range run {
+		entries[i] = config.RunEntry{Group: name}
+	}
 	return &config.Config{
 		Version: config.SchemaVersion,
 		Groups:  groups,
 		Flows: map[string]config.Flow{
-			"f": {Mode: config.ModeDAG, Run: append([]string(nil), run...)},
+			"f": {Mode: config.ModeDAG, Run: entries},
 		},
 	}
 }

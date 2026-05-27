@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,4 +108,65 @@ flows:
 	p, err := Build(cfg, "f")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b"}, p.Roots)
+}
+
+func TestBuildDAGWhenCreatesEdge(t *testing.T) {
+	doc := `version: 2
+groups:
+  - {name: test, command: echo}
+  - {name: deploy, command: echo}
+flows:
+  ci:
+    mode: dag
+    run:
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'`
+	cfg, err := config.NewConfig([]byte(doc))
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	p, err := Build(cfg, "ci")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if got := p.Predecessors["deploy"]; len(got) != 1 || got[0] != "test" {
+		t.Fatalf("deploy predecessors = %v, want [test]", got)
+	}
+	if p.When["deploy"] != `{{ eq (output "test") "pass" }}` {
+		t.Fatalf("Plan.When[deploy] = %q, want the predicate", p.When["deploy"])
+	}
+	if len(p.Roots) != 1 || p.Roots[0] != "test" {
+		t.Fatalf("roots = %v, want [test]", p.Roots)
+	}
+}
+
+func TestBuildDAGBareStringsUnchanged(t *testing.T) {
+	// Regression guard: a no-when dag flow plans identically to legacy behavior.
+	doc := `version: 2
+groups:
+  - {name: a, command: echo}
+  - {name: b, command: 'echo {{ output "a" }}'}
+  - {name: c, command: echo}
+flows:
+  ci:
+    mode: dag
+    run: [a, b, c]`
+	cfg, err := config.NewConfig([]byte(doc))
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	p, err := Build(cfg, "ci")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(p.When) != 0 {
+		t.Fatalf("Plan.When = %v, want empty for no-when flow", p.When)
+	}
+	if got := p.Predecessors["b"]; len(got) != 1 || got[0] != "a" {
+		t.Fatalf("b predecessors = %v, want [a]", got)
+	}
+	if !reflect.DeepEqual(p.Roots, []string{"a", "c"}) {
+		t.Fatalf("roots = %v, want [a c]", p.Roots)
+	}
 }

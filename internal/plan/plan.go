@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/template"
 )
 
 // Plan is the schedulable shape of a Flow.
@@ -15,6 +16,8 @@ import (
 // For step mode, Waves holds one entry per declared step (preserving order
 // and parallelism). For dag mode, Waves is nil and Predecessors / Successors
 // drive a Kahn-style scheduler; Roots is the initial ready set.
+// When carries the raw when: predicate for each group that declares one
+// (dag mode only; absent = unconditional).
 type Plan struct {
 	Flow         string
 	Mode         config.Mode
@@ -23,6 +26,7 @@ type Plan struct {
 	Predecessors map[string][]string // dag mode only
 	Successors   map[string][]string // dag mode only
 	Roots        []string            // dag mode only
+	When         map[string]string   // dag mode only: group -> when predicate (absent = unconditional)
 }
 
 // Build returns a Plan for the named flow.
@@ -52,30 +56,45 @@ func Build(cfg *config.Config, flowName string) (*Plan, error) {
 
 func buildDAGEdges(cfg *config.Config, flow *config.Flow, p *Plan) {
 	memberSet := make(map[string]struct{}, len(flow.Run))
-	for _, m := range flow.Run {
-		memberSet[m] = struct{}{}
+	for i := range flow.Run {
+		memberSet[flow.Run[i].Group] = struct{}{}
 	}
 	p.Predecessors = make(map[string][]string, len(flow.Run))
 	p.Successors = make(map[string][]string, len(flow.Run))
+	p.When = make(map[string]string)
 
-	for _, m := range flow.Run {
-		g := cfg.GroupByName(m)
+	for i := range flow.Run {
+		m := flow.Run[i].Group
+		if w := flow.Run[i].When; w != "" {
+			p.When[m] = w
+		}
 		seenPred := make(map[string]struct{})
-		// Refs cannot error here: NewConfig validated every template already.
-		refs, _ := config.ExtractRefs(g)
-		for _, ref := range refs {
+		addEdge := func(ref string) {
 			if _, in := memberSet[ref]; !in {
-				continue // ValidateReferences would have rejected this
+				return // ValidateReferences already rejected out-of-flow refs
 			}
 			if _, dup := seenPred[ref]; dup {
-				continue
+				return
 			}
 			seenPred[ref] = struct{}{}
 			p.Predecessors[m] = append(p.Predecessors[m], ref)
 			p.Successors[ref] = append(p.Successors[ref], m)
 		}
+		g := cfg.GroupByName(m)
+		// Refs cannot error here: NewConfig validated every template already.
+		refs, _ := config.ExtractRefs(g)
+		for _, ref := range refs {
+			addEdge(ref)
+		}
+		if w := flow.Run[i].When; w != "" {
+			whenRefs, _ := template.Refs(w)
+			for _, ref := range whenRefs {
+				addEdge(ref)
+			}
+		}
 	}
-	for _, m := range flow.Run {
+	for i := range flow.Run {
+		m := flow.Run[i].Group
 		if len(p.Predecessors[m]) == 0 {
 			p.Roots = append(p.Roots, m)
 		}

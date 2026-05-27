@@ -38,6 +38,16 @@ func statusOf(evs []Event, group string) string {
 	return ""
 }
 
+// reasonOf returns the end reason emitted for a group.
+func reasonOf(evs []Event, group string) string {
+	for i := range evs {
+		if evs[i].Event == EventGroupEnd && evs[i].Group == group {
+			return evs[i].Reason
+		}
+	}
+	return ""
+}
+
 func TestJSONEmitter_FlowAndGroupEvents(t *testing.T) {
 	t.Parallel()
 	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
@@ -95,4 +105,23 @@ func TestNopEmitterIsDefault(t *testing.T) {
 	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
 	e := New(cfg, WithRunner(&fakeRunner{}))
 	require.NoError(t, e.RunFlow(context.Background(), "f"))
+}
+
+func TestJSONEmitter_DAGSkippedReason(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../config/test-resources/config-dag-when.yml")
+	require.NoError(t, err)
+
+	// test outputs "fail" -> deploy.when false -> deploy skipped (reason "when")
+	// -> report cascade-skipped (reason mentions upstream deploy).
+	var buf bytes.Buffer
+	r := &fakeRunner{outputs: map[string]string{"build": "built", "test": "fail"}}
+	e := New(cfg, WithRunner(r), WithEmitter(NewJSONEmitter(&buf)))
+	require.NoError(t, e.RunFlow(context.Background(), "ci"))
+
+	evs := decodeEvents(t, buf.Bytes())
+	assert.Equal(t, StatusSkipped, statusOf(evs, "deploy"))
+	assert.Equal(t, StatusSkipped, statusOf(evs, "report"))
+	assert.Equal(t, "when", reasonOf(evs, "deploy"))
+	assert.Contains(t, reasonOf(evs, "report"), "deploy")
 }

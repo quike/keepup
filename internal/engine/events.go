@@ -33,6 +33,7 @@ type Event struct {
 	Status     string    `json:"status,omitempty"`
 	DurationMS int64     `json:"durationMs,omitempty"`
 	Err        string    `json:"err,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
 	Time       time.Time `json:"time"`
 }
 

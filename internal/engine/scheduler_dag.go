@@ -196,7 +196,7 @@ func (e *Engine) runDAGLoop(gctx context.Context, doneCh <-chan string, s *dagSc
 // and a group.end event marking it skipped on the structured stream.
 func (e *Engine) emitGroupSkipped(name, reason string) {
 	e.log.Info("group skipped", "group", name, "reason", reason)
-	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped})
+	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped, Reason: reason})
 }
 
 func cloneSnapshot(m map[string]string) map[string]string {

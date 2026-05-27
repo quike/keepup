@@ -716,6 +716,17 @@ flows:
       - [nested]`,
 			wantErr: "must be a group name or a {group, when} map",
 		},
+		{
+			name: "empty scalar group",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - ""`,
+			wantErr: "group name must not be empty",
+		},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {

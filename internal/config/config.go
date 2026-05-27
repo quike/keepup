@@ -152,6 +152,9 @@ type RunEntry struct {
 func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
+		if node.Value == "" {
+			return fmt.Errorf("run entry: group name must not be empty")
+		}
 		r.Group = node.Value
 		return nil
 	case yaml.MappingNode:

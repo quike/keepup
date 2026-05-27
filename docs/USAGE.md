@@ -51,6 +51,7 @@ flows:
 ## CLI cheatsheet
 
 ```sh
+keepup init               # scaffold a starter keepup.yml
 keepup run                # run the default flow
 keepup run <flow>         # run a specific flow
 keepup watch [flow]       # re-run a flow when its cache.reads inputs change

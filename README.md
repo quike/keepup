@@ -36,6 +36,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 ## Quick start
 
 ```sh
+keepup init           # scaffold a starter keepup.yml
 keepup run            # run the default flow
 keepup run ci         # run a named flow
 keepup watch dev      # re-run on file changes

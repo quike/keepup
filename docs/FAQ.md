@@ -239,6 +239,15 @@ the cache is written only on success, so a failed/timed-out run can't poison
 it. In dag mode there are no steps, so the flow-level values are the only
 envelope.
 
+### How does `when:` differ from a group's `skip-if`?
+
+`when:` is on a **step** and decides whether the whole wave runs; `skip-if:` is
+on a **group** and decides whether that one group runs. `when:` is a template
+predicate (uses `output`/`env`/sprig, falsey = skip) evaluated against earlier
+steps' outputs; `skip-if:` is a shell command (exit 0 = skip) run just before
+the group. Use `when:` for "should this phase happen at all?" and `skip-if:`
+for "is this group's work already done?". `when:` is step-mode only.
+
 ---
 
 ## Caching and gating

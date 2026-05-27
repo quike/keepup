@@ -288,6 +288,28 @@ flows:
 Step mode is the right default: order is visible at a glance and barriers
 make behaviour predictable.
 
+A step may carry a `when:` predicate — a template that conditionally skips the
+whole step:
+
+```yaml
+flows:
+  release:
+    mode: step
+    steps:
+      - run: [test]
+      - run: [deploy]
+        when: '{{ eq (env "BRANCH") "main" }}'   # only deploy on main
+      - run: [notify]
+        when: '{{ contains "PASS" (output "test") }}'
+```
+
+`when` is rendered by the same template engine (it can use `output`, `env`,
+and sprig) and is **falsey** — and therefore skips the step — when it renders
+to `""`, `false`, `0`, `no`, or `off`. It is evaluated against the outputs of
+**earlier** steps plus the environment; referencing a same-step or later group
+is rejected at config-load. A skipped step's groups produce no output.
+`when:` applies to step mode only (dag mode has no steps).
+
 ### DAG mode
 
 DAG mode drops explicit steps. Groups schedule topologically from the data

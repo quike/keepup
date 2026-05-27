@@ -549,6 +549,51 @@ func TestNewConfig_RejectsMalformedTemplate(t *testing.T) {
 	}
 }
 
+func TestNewConfig_When(t *testing.T) {
+	t.Parallel()
+	t.Run("valid when with earlier-step ref parses", func(t *testing.T) {
+		cfg, err := NewConfig([]byte(`
+version: 2
+groups:
+  - {name: a, command: echo}
+  - {name: b, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+      - run: [b]
+        when: '{{ eq (output "a") "x" }}'
+`))
+		require.NoError(t, err)
+		assert.Equal(t, `{{ eq (output "a") "x" }}`, cfg.Flows["f"].Steps[1].When)
+	})
+
+	sameStep := `version: 2
+groups:
+  - {name: a, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ output "a" }}'
+`
+	malformed := `version: 2
+groups:
+  - {name: a, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ bogusfunc }}'
+`
+	for name, yaml := range map[string]string{"same-step ref": sameStep, "malformed": malformed} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewConfig([]byte(yaml))
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestExtractRefs(t *testing.T) {
 	t.Parallel()
 	g := &Group{

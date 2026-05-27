@@ -60,6 +60,74 @@ func TestExpand(t *testing.T) {
 	}
 }
 
+func TestExpand_Sprig(t *testing.T) {
+	t.Parallel()
+	data := Data{
+		Outputs: map[string]string{
+			"name":   "Keep Up",
+			"sha":    "abcdef1234567890",
+			"csv":    "a,b,c",
+			"padded": "  spaced  ",
+			"empty":  "",
+			"num":    "21",
+		},
+		Env: map[string]string{"HOME": "/home/q"},
+	}
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// case transforms
+		{"upper", `{{ output "name" | upper }}`, "KEEP UP"},
+		{"lower", `{{ output "name" | lower }}`, "keep up"},
+		{"title", `{{ output "name" | lower | title }}`, "Keep Up"},
+		{"nospace", `{{ output "name" | nospace }}`, "KeepUp"},
+		// trimming / replace
+		{"trim", `{{ output "padded" | trim }}`, "spaced"},
+		{"replace", `{{ output "name" | replace " " "-" }}`, "Keep-Up"},
+		{"substr", `{{ output "sha" | substr 0 4 }}`, "abcd"},
+		{"trunc", `{{ output "sha" | trunc 3 }}`, "abc"},
+		{"repeat", `{{ "ab" | repeat 3 }}`, "ababab"},
+		// quoting
+		{"quote", `{{ output "name" | quote }}`, `"Keep Up"`},
+		{"squote", `{{ output "name" | squote }}`, "'Keep Up'"},
+		// predicates → text
+		{"contains true", `{{ if contains "Up" (output "name") }}yes{{ else }}no{{ end }}`, "yes"},
+		{"hasPrefix false", `{{ hasPrefix "X" (output "name") }}`, "false"},
+		{"hasSuffix true", `{{ hasSuffix "Up" (output "name") }}`, "true"},
+		// defaults / coalesce / empty
+		{"default on empty output", `{{ output "empty" | default "fallback" }}`, "fallback"},
+		{"default on missing output", `{{ output "ghost" | default "fb" }}`, "fb"},
+		{"coalesce", `{{ coalesce (output "empty") (output "name") }}`, "Keep Up"},
+		{"ternary", `{{ ternary "T" "F" (eq (output "name") "Keep Up") }}`, "T"},
+		// lists
+		{"splitList index", `{{ index (splitList "," (output "csv")) 1 }}`, "b"},
+		{"join list", `{{ list "x" "y" "z" | join "/" }}`, "x/y/z"},
+		// math (sprig works on ints; atoi from string)
+		{"add", `{{ add (output "num" | atoi) 1 }}`, "22"},
+		{"mul", `{{ mul (output "num" | atoi) 2 }}`, "42"},
+		// encoding / hashing (deterministic)
+		{"b64enc", `{{ "hi" | b64enc }}`, "aGk="},
+		{"b64 round trip", `{{ "hi" | b64enc | b64dec }}`, "hi"},
+		{"sha256", `{{ "" | sha256sum }}`, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		// regex
+		{"regexReplaceAll", `{{ regexReplaceAll "[0-9]+" (output "sha") "#" }}`, "abcdef#"},
+		// env piped through sprig
+		{"env base", `{{ env "HOME" | base }}`, "q"},
+		{"env missing default", `{{ env "NOPE" | default "none" }}`, "none"},
+		// chained pipeline
+		{"chain", `{{ output "name" | lower | replace " " "_" | printf "v-%s" }}`, "v-keep_up"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NewExpander().Expand(tc.in, data)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestExpand_Errors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

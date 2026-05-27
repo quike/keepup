@@ -43,14 +43,26 @@ flows:
 `
 
 func newInitCmd(stdout io.Writer) *cobra.Command {
-	var force bool
+	var (
+		force  bool
+		global bool
+	)
 	cmd := &cobra.Command{
 		Use:   "init [path]",
 		Short: "Write a starter keepup.yml to get going quickly",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			path := "keepup.yml"
-			if len(args) == 1 {
+			switch {
+			case global && len(args) == 1:
+				return fmt.Errorf("--global and an explicit path are mutually exclusive")
+			case global:
+				p, err := defaultConfigPath()
+				if err != nil {
+					return err
+				}
+				path = p
+			case len(args) == 1:
 				path = args[0]
 			}
 			if _, err := os.Stat(path); err == nil && !force {
@@ -69,6 +81,7 @@ func newInitCmd(stdout io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite an existing file")
+	cmd.Flags().BoolVarP(&global, "global", "g", false, "Write to the default config path (~/.config/keepup/keepup.yml)")
 	return cmd
 }
 

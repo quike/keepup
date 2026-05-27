@@ -61,6 +61,29 @@ func TestInitCmd(t *testing.T) {
 	})
 }
 
+func TestInitCmd_Global(t *testing.T) {
+	t.Run("writes to the default config path", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		var out bytes.Buffer
+		cmd := newRootCmd(&out, &out)
+		cmd.SetArgs([]string{"init", "--global"})
+		require.NoError(t, cmd.Execute())
+		assert.FileExists(t, filepath.Join(home, ".config", "keepup", "keepup.yml"))
+	})
+
+	t.Run("--global with explicit path is rejected", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		cmd := newRootCmd(&out, &out)
+		cmd.SetArgs([]string{"init", "--global", "x.yml"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mutually exclusive")
+	})
+}
+
 func TestInitCmd_GeneratedConfigIsValid(t *testing.T) {
 	t.Parallel()
 	// The scaffold must always parse + validate, and running it must work.

@@ -1,0 +1,54 @@
+---
+# Exercises step-level `when:` conditionals across the documented forms:
+#   - a predicate over a prior step's output ({{ output "tests" | contains ... }})
+#   - a predicate over the environment ({{ eq (env "DEPLOY") "true" }})
+#   - a falsey predicate that skips its step ({{ env "FORCE_ROLLBACK" }} → empty)
+#   - a step with no `when:` that always runs
+version: 2
+
+env:
+  DEPLOY: "true"
+  COUNT: "3"
+
+groups:
+  - { name: tests, command: echo, params: ["PASS"] }
+  - { name: build, command: echo, params: ["built"] }
+  - { name: deploy, command: echo, params: ["deploying"] }
+  - { name: rollback, command: echo, params: ["rolling back"] }
+  - { name: notify, command: echo, params: ["notifying"] }
+  - { name: e-and, command: echo, params: ["and"] }
+  - { name: e-or, command: echo, params: ["or"] }
+  - { name: e-not, command: echo, params: ["not"] }
+  - { name: e-num, command: echo, params: ["num"] }
+  - { name: e-skip, command: echo, params: ["skip"] }
+
+default: ci
+
+flows:
+  ci:
+    description: "Gate steps on prior output and environment"
+    mode: step
+    steps:
+      - run: [tests]
+      - run: [build]
+        when: '{{ output "tests" | contains "PASS" }}' # runs: tests printed PASS
+      - run: [deploy]
+        when: '{{ eq (env "DEPLOY") "true" }}' # runs: DEPLOY=true
+      - run: [rollback]
+        when: '{{ env "FORCE_ROLLBACK" }}' # skipped: unset → empty → falsey
+      - run: [notify] # always runs (no when)
+
+  edges:
+    description: "Boolean, numeric, and negation predicate edge cases"
+    mode: step
+    steps:
+      - run: [e-and]
+        when: '{{ and (eq (env "DEPLOY") "true") true }}' # runs
+      - run: [e-or]
+        when: '{{ or false (eq (env "DEPLOY") "true") }}' # runs
+      - run: [e-not]
+        when: '{{ not (env "FORCE") }}' # runs: FORCE unset → empty → not → true
+      - run: [e-num]
+        when: '{{ gt (atoi (env "COUNT")) 2 }}' # runs: 3 > 2
+      - run: [e-skip]
+        when: '{{ eq (env "DEPLOY") "no" }}' # skipped: DEPLOY is "true"

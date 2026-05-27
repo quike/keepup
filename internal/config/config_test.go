@@ -549,6 +549,79 @@ func TestNewConfig_RejectsMalformedTemplate(t *testing.T) {
 	}
 }
 
+func TestNewConfig_When(t *testing.T) {
+	t.Parallel()
+	t.Run("valid when with earlier-step ref parses", func(t *testing.T) {
+		cfg, err := NewConfig([]byte(`
+version: 2
+groups:
+  - {name: a, command: echo}
+  - {name: b, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+      - run: [b]
+        when: '{{ eq (output "a") "x" }}'
+`))
+		require.NoError(t, err)
+		assert.Equal(t, `{{ eq (output "a") "x" }}`, cfg.Flows["f"].Steps[1].When)
+	})
+
+	sameStep := `version: 2
+groups:
+  - {name: a, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ output "a" }}'
+`
+	malformed := `version: 2
+groups:
+  - {name: a, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ bogusfunc }}'
+`
+	// when references a group that exists but is not part of this flow.
+	notInFlow := `version: 2
+groups:
+  - {name: a, command: echo}
+  - {name: outsider, command: echo}
+flows:
+  f:
+    steps:
+      - run: [a]
+        when: '{{ output "outsider" }}'
+`
+	for name, yaml := range map[string]string{
+		"same-step ref":   sameStep,
+		"malformed":       malformed,
+		"ref not in flow": notInFlow,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewConfig([]byte(yaml))
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestLoadConfig_WhenResource(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-when.yml")
+	require.NoError(t, err)
+	steps := cfg.Flows["ci"].Steps
+	require.Len(t, steps, 5)
+	assert.Empty(t, steps[0].When) // tests: no gate
+	assert.Equal(t, `{{ output "tests" | contains "PASS" }}`, steps[1].When)
+	assert.Equal(t, `{{ eq (env "DEPLOY") "true" }}`, steps[2].When)
+	assert.Equal(t, `{{ env "FORCE_ROLLBACK" }}`, steps[3].When)
+	assert.Empty(t, steps[4].When) // notify: always runs
+}
+
 func TestExtractRefs(t *testing.T) {
 	t.Parallel()
 	g := &Group{

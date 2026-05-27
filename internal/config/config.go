@@ -131,6 +131,10 @@ type Step struct {
 	Run     []string `yaml:"run"`
 	Timeout string   `yaml:"timeout,omitempty"`
 	Retries int      `yaml:"retries,omitempty"`
+	// When is an optional template predicate. The step is skipped when it
+	// renders to a falsey value ("", "false", "0", "no", "off"). It is
+	// evaluated against the outputs of earlier steps plus the environment.
+	When string `yaml:"when,omitempty"`
 }
 
 // NewConfig parses YAML bytes into a Config and validates the schema.

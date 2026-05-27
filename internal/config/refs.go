@@ -91,8 +91,34 @@ func (c *Config) checkStepRefs(flowName string, f *Flow, memberSet map[string]st
 				}
 			}
 		}
+		if err := c.checkWhenRefs(flowName, stepIdx, step.When, memberSet, seen); err != nil {
+			return err
+		}
 		for _, member := range step.Run {
 			seen[member] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// checkWhenRefs validates that a step's `when` predicate only references groups
+// produced by earlier steps (the same rule as param/command references).
+func (c *Config) checkWhenRefs(flowName string, stepIdx int, when string, memberSet, seen map[string]struct{}) error {
+	if when == "" {
+		return nil
+	}
+	refs, err := template.Refs(when)
+	if err != nil {
+		return fmt.Errorf("flow %q step %d: when: %w", flowName, stepIdx+1, err)
+	}
+	for _, ref := range refs {
+		if _, ok := memberSet[ref]; !ok {
+			return fmt.Errorf("flow %q step %d: when references {{ output.%s }}, but %q is not part of this flow",
+				flowName, stepIdx+1, ref, ref)
+		}
+		if _, ok := seen[ref]; !ok {
+			return fmt.Errorf("flow %q step %d: when references {{ output.%s }}, but %q is not produced by an earlier step",
+				flowName, stepIdx+1, ref, ref)
 		}
 	}
 	return nil

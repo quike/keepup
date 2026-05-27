@@ -516,7 +516,8 @@ func TestExtractRefs(t *testing.T) {
 			"{{   output.d   }}",
 		},
 	}
-	got := ExtractRefs(g)
+	got, err := ExtractRefs(g)
+	require.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c", "d"}, got)
 }
 

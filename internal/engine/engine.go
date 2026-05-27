@@ -13,6 +13,7 @@ import (
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/logger"
 	"github.com/quike/keepup/internal/plan"
+	"github.com/quike/keepup/internal/template"
 )
 
 // Engine binds a parsed Config to a set of pluggable collaborators.
@@ -22,7 +23,7 @@ type Engine struct {
 	runner         Runner
 	prober         Prober
 	outputs        OutputStore
-	expander       Expander
+	expander       template.Expander
 	cache          cache.Store
 	log            logger.Logger
 	maxConcurrency int
@@ -47,8 +48,8 @@ func WithProber(p Prober) Option { return func(e *Engine) { e.prober = p } }
 // WithOutputStore overrides the default in-memory OutputStore.
 func WithOutputStore(s OutputStore) Option { return func(e *Engine) { e.outputs = s } }
 
-// WithExpander overrides the default TemplateExpander.
-func WithExpander(x Expander) Option { return func(e *Engine) { e.expander = x } }
+// WithExpander overrides the default template.Expander.
+func WithExpander(x template.Expander) Option { return func(e *Engine) { e.expander = x } }
 
 // WithCache overrides the default file-backed cache store.
 func WithCache(s cache.Store) Option { return func(e *Engine) { e.cache = s } }
@@ -83,7 +84,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 		runner:         NewShellRunner(),
 		prober:         ShellProber{},
 		outputs:        NewMemoryOutputStore(),
-		expander:       TemplateExpander{},
+		expander:       template.NewExpander(),
 		cache:          cache.NewFileStore(cacheDir),
 		log:            logger.Nop(),
 		maxConcurrency: cfg.Settings.MaxConcurrency,
@@ -161,47 +162,62 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 // {{ output.X }} references resolve. The command run (only) is wrapped with the
 // envelope's per-attempt timeout and bounded retries.
 func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string, env envelope) error {
+	data := template.Data{Outputs: baseline, Env: e.cfg.Env}
+
+	// Expand the command and every param against the available outputs/env.
+	// A copy of the group carries the expanded command so the runner, cache,
+	// and logs all see the resolved value.
+	g := *group
+	cmd, err := e.expander.Expand(group.Command, data)
+	if err != nil {
+		return fmt.Errorf("group %q: expand command: %w", group.Name, err)
+	}
+	g.Command = cmd
+
 	expanded := make([]string, len(group.Params))
 	for i, p := range group.Params {
-		expanded[i] = e.expander.Expand(p, baseline)
+		expanded[i], err = e.expander.Expand(p, data)
+		if err != nil {
+			return fmt.Errorf("group %q: expand param %d: %w", group.Name, i+1, err)
+		}
 	}
 
 	if e.dryRun {
 		e.log.Info("[dry-run] would run",
-			"group", group.Name, "command", group.Command, "params", expanded, "shell", group.UseShell())
+			"group", g.Name, "command", g.Command, "params", expanded, "shell", g.UseShell())
 		return nil
 	}
 
-	if group.Require != "" {
-		if err := e.prober.Probe(ctx, group.Require, e.cfg.Env); err != nil {
-			return fmt.Errorf("group %q: requirement %q not met: %w", group.Name, group.Require, err)
+	if g.Require != "" {
+		if err = e.prober.Probe(ctx, g.Require, e.cfg.Env); err != nil {
+			return fmt.Errorf("group %q: requirement %q not met: %w", g.Name, g.Require, err)
 		}
 	}
 
-	if group.SkipIf != "" {
-		if err := e.prober.Probe(ctx, group.SkipIf, e.cfg.Env); err == nil {
-			out := e.cachedOutput(group)
-			e.outputs.Set(group.Name, out)
-			e.log.Info("group skipped", "group", group.Name, "reason", "skip-if", "predicate", group.SkipIf)
+	if g.SkipIf != "" {
+		if err = e.prober.Probe(ctx, g.SkipIf, e.cfg.Env); err == nil {
+			out := e.cachedOutput(&g)
+			e.outputs.Set(g.Name, out)
+			e.log.Info("group skipped", "group", g.Name, "reason", "skip-if", "predicate", g.SkipIf)
 			return nil
 		}
 	}
 
-	if fp, hit := e.cacheLookup(group, expanded); hit {
-		e.outputs.Set(group.Name, fp.Output)
-		e.log.Info("cache hit", "group", group.Name, "fingerprint", fp.Fingerprint)
+	if fp, hit := e.cacheLookup(&g, expanded); hit {
+		e.outputs.Set(g.Name, fp.Output)
+		e.log.Info("cache hit", "group", g.Name, "fingerprint", fp.Fingerprint)
 		return nil
 	}
 
-	e.log.Info("running group", "group", group.Name, "command", group.Command, "params", expanded)
-	out, err := e.execWithEnvelope(ctx, group, expanded, env)
+	e.log.Info("running group", "group", g.Name, "command", g.Command, "params", expanded)
+	out, err := e.execWithEnvelope(ctx, &g, expanded, env)
 	if err != nil {
-		e.log.Error("group failed", "group", group.Name, "err", err.Error(), "output", out)
+		e.log.Error("group failed", "group", g.Name, "err", err.Error(), "output", out)
 		return err
 	}
-	e.log.Trace("group output", "group", group.Name, "output", out)
-	e.outputs.Set(group.Name, out)
-	e.cacheStore(group, expanded, out)
+	e.log.Trace("group output", "group", g.Name, "output", out)
+	e.outputs.Set(g.Name, out)
+	e.cacheStore(&g, expanded, out)
 	return nil
 }
 

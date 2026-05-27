@@ -25,6 +25,7 @@ type Engine struct {
 	outputs        OutputStore
 	expander       template.Expander
 	cache          cache.Store
+	emitter        Emitter
 	log            logger.Logger
 	maxConcurrency int
 	dryRun         bool
@@ -63,6 +64,9 @@ func WithLogger(l logger.Logger) Option { return func(e *Engine) { e.log = l } }
 // WithDryRun forces dry-run mode regardless of the config flag.
 func WithDryRun(dry bool) Option { return func(e *Engine) { e.dryRun = dry } }
 
+// WithEmitter sets the structured event emitter (default: discard).
+func WithEmitter(em Emitter) Option { return func(e *Engine) { e.emitter = em } }
+
 // WithRetryBackoff overrides the base retry backoff (delay for attempt N is
 // base*N). Primarily useful in tests to avoid real sleeps.
 func WithRetryBackoff(d time.Duration) Option { return func(e *Engine) { e.retryBackoff = d } }
@@ -86,6 +90,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 		outputs:        NewMemoryOutputStore(),
 		expander:       template.NewExpander(),
 		cache:          cache.NewFileStore(cacheDir),
+		emitter:        nopEmitter{},
 		log:            logger.Nop(),
 		maxConcurrency: cfg.Settings.MaxConcurrency,
 		dryRun:         cfg.Settings.DryRun,
@@ -114,15 +119,26 @@ func (e *Engine) RunFlow(ctx context.Context, flowName string) error {
 	}
 	flow := e.cfg.Flows[flowName]
 	e.log.Info("starting flow", "flow", flowName, "mode", string(p.Mode))
+	e.emitter.Emit(Event{Event: EventFlowStart, Flow: flowName, Mode: string(p.Mode)})
 
+	start := time.Now()
 	switch p.Mode {
 	case config.ModeStep:
-		return e.runStepPlan(ctx, p, &flow)
+		err = e.runStepPlan(ctx, p, &flow)
 	case config.ModeDAG:
-		return e.runDAGPlan(ctx, p, &flow)
+		err = e.runDAGPlan(ctx, p, &flow)
 	default:
-		return fmt.Errorf("flow %q: unknown mode %q", flowName, p.Mode)
+		err = fmt.Errorf("flow %q: unknown mode %q", flowName, p.Mode)
 	}
+	status := StatusOK
+	if err != nil {
+		status = StatusFailed
+	}
+	e.emitter.Emit(Event{
+		Event: EventFlowEnd, Flow: flowName, Status: status,
+		DurationMS: msSince(start), Err: errString(err),
+	})
+	return err
 }
 
 // envelope is the resolved control envelope for a group's command execution.
@@ -161,7 +177,20 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 // Skipped or cache-hit groups still publish an output value so downstream
 // {{ output.X }} references resolve. The command run (only) is wrapped with the
 // envelope's per-attempt timeout and bounded retries.
-func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string, env envelope) error {
+func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string, env envelope) (err error) {
+	start := time.Now()
+	e.emitter.Emit(Event{Event: EventGroupStart, Group: group.Name})
+	status := StatusOK
+	defer func() {
+		if err != nil {
+			status = StatusFailed
+		}
+		e.emitter.Emit(Event{
+			Event: EventGroupEnd, Group: group.Name, Status: status,
+			DurationMS: msSince(start), Err: errString(err),
+		})
+	}()
+
 	data := template.Data{Outputs: baseline, Env: e.cfg.Env}
 
 	// Expand the command and every param against the available outputs/env.
@@ -185,6 +214,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	if e.dryRun {
 		e.log.Info("[dry-run] would run",
 			"group", g.Name, "command", g.Command, "params", expanded, "shell", g.UseShell())
+		status = StatusDryRun
 		return nil
 	}
 
@@ -199,6 +229,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 			out := e.cachedOutput(&g)
 			e.outputs.Set(g.Name, out)
 			e.log.Info("group skipped", "group", g.Name, "reason", "skip-if", "predicate", g.SkipIf)
+			status = StatusSkipped
 			return nil
 		}
 	}
@@ -206,6 +237,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	if fp, hit := e.cacheLookup(&g, expanded); hit {
 		e.outputs.Set(g.Name, fp.Output)
 		e.log.Info("cache hit", "group", g.Name, "fingerprint", fp.Fingerprint)
+		status = StatusCacheHit
 		return nil
 	}
 

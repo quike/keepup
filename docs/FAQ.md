@@ -376,6 +376,19 @@ Then `keepup run quick`. This is more discoverable (`keepup list` shows it),
 composable (you can build it up over time), and consistent with how every
 other invocation works.
 
+### Can I get machine-readable run output for CI?
+
+Yes — `keepup run --events <path>` writes a newline-delimited JSON event
+stream: `flow.start`, `group.start`, `group.end` (with `status` of
+ok/failed/skipped/cache-hit/dry-run and `durationMs`), and `flow.end`. Use a
+file path, or `-` to write to stdout. It's independent of the human/JSON
+logging (`settings.logging`) — events are for tooling, logs are for people.
+
+```sh
+keepup run ci --events run.jsonl
+keepup run ci --events -          # to stdout
+```
+
 ### How do I see what flows and groups are available?
 
 ```sh

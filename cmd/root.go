@@ -86,6 +86,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func newRunCmd(opts *runtimeOpts) *cobra.Command {
+	var eventsPath string
 	cmd := &cobra.Command{
 		Use:   "run [flow]",
 		Short: "Execute a flow (uses the configured default when no flow is given)",
@@ -98,16 +99,39 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 			if len(args) == 1 {
 				flowName = args[0]
 			}
-			e := engine.New(opts.cfg,
+			engineOpts := []engine.Option{
 				engine.WithLogger(opts.log),
 				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
 				engine.WithNoCache(opts.noCache),
-			)
+			}
+			if eventsPath != "" {
+				w, closeFn, err := openEventsWriter(eventsPath, cmd.OutOrStdout())
+				if err != nil {
+					return err
+				}
+				defer closeFn()
+				engineOpts = append(engineOpts, engine.WithEmitter(engine.NewJSONEmitter(w)))
+			}
+			e := engine.New(opts.cfg, engineOpts...)
 			return e.RunFlow(cmd.Context(), flowName)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "Ignore cached results; run every group")
+	cmd.Flags().StringVar(&eventsPath, "events", "", "Write a JSON event stream to this file ('-' for stdout)")
 	return cmd
+}
+
+// openEventsWriter resolves the --events target: "-" means stdout, otherwise a
+// file (truncated). The returned closer is a no-op for stdout.
+func openEventsWriter(path string, stdout io.Writer) (io.Writer, func(), error) {
+	if path == "-" {
+		return stdout, func() {}, nil
+	}
+	f, err := os.Create(filepath.Clean(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open events file %q: %w", path, err)
+	}
+	return f, func() { _ = f.Close() }, nil
 }
 
 func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {

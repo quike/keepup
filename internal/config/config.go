@@ -115,12 +115,12 @@ func (g *Group) UseShell() bool { return g.Shell != "" }
 // in the flow. In step mode a Step may override them for its own wave; in dag
 // mode the flow-level values are the only knob (there are no steps).
 type Flow struct {
-	Description string   `yaml:"description,omitempty"`
-	Mode        Mode     `yaml:"mode,omitempty"`
-	Steps       []Step   `yaml:"steps,omitempty"`
-	Run         []string `yaml:"run,omitempty"`
-	Timeout     string   `yaml:"timeout,omitempty"`
-	Retries     int      `yaml:"retries,omitempty"`
+	Description string     `yaml:"description,omitempty"`
+	Mode        Mode       `yaml:"mode,omitempty"`
+	Steps       []Step     `yaml:"steps,omitempty"`
+	Run         []RunEntry `yaml:"run,omitempty"`
+	Timeout     string     `yaml:"timeout,omitempty"`
+	Retries     int        `yaml:"retries,omitempty"`
 }
 
 // Step is one execution wave inside a step-mode Flow.
@@ -135,6 +135,46 @@ type Step struct {
 	// renders to a falsey value ("", "false", "0", "no", "off"). It is
 	// evaluated against the outputs of earlier steps plus the environment.
 	When string `yaml:"when,omitempty"`
+}
+
+// RunEntry is one member of a dag-mode flow's run list. It is either a bare
+// group-name scalar or a {group, when} mapping; both forms reference a group
+// defined in top-level groups: (never an inline definition).
+type RunEntry struct {
+	Group string `yaml:"group"`
+	// When is an optional template predicate. The group is skipped when it
+	// renders falsey ("", "false", "0", "no", "off"); see the engine.
+	When string `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML accepts a scalar (group name) or a mapping ({group, when}).
+// Any other shape, an empty group, or an unexpected key is a load error.
+func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		r.Group = node.Value
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i].Value
+			val := node.Content[i+1].Value
+			switch key {
+			case "group":
+				r.Group = val
+			case "when":
+				r.When = val
+			default:
+				return fmt.Errorf("run entry: unexpected key %q (commands are defined in groups:)", key)
+			}
+		}
+		if r.Group == "" {
+			return fmt.Errorf("run entry: missing 'group'")
+		}
+		return nil
+	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+		return fmt.Errorf("run entry: must be a group name or a {group, when} map")
+	}
+	return fmt.Errorf("run entry: must be a group name or a {group, when} map")
 }
 
 // NewConfig parses YAML bytes into a Config and validates the schema.
@@ -326,7 +366,11 @@ func (c *Config) GroupByName(name string) *Group {
 // Members returns the groups referenced by a flow, regardless of mode.
 func (f *Flow) Members() []string {
 	if f.Mode == ModeDAG {
-		return append([]string(nil), f.Run...)
+		out := make([]string, len(f.Run))
+		for i := range f.Run {
+			out[i] = f.Run[i].Group
+		}
+		return out
 	}
 	out := make([]string, 0)
 	for _, s := range f.Steps {

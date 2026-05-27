@@ -645,7 +645,7 @@ func TestMembers(t *testing.T) {
 		assert.Equal(t, []string{"a", "b", "c"}, f.Members())
 	})
 	t.Run("dag mode returns run set", func(t *testing.T) {
-		f := Flow{Mode: ModeDAG, Run: []string{"a", "b"}}
+		f := Flow{Mode: ModeDAG, Run: []RunEntry{{Group: "a"}, {Group: "b"}}}
 		assert.Equal(t, []string{"a", "b"}, f.Members())
 	})
 }
@@ -655,4 +655,83 @@ func TestGroupByName(t *testing.T) {
 	cfg := &Config{Groups: []Group{{Name: "a"}, {Name: "b"}}}
 	assert.NotNil(t, cfg.GroupByName("a"))
 	assert.Nil(t, cfg.GroupByName("missing"))
+}
+
+func TestRunEntryUnmarshal(t *testing.T) {
+	t.Parallel()
+	valid := `version: 2
+groups:
+  - {name: build, command: echo}
+  - {name: deploy, command: echo}
+flows:
+  f:
+    mode: dag
+    run:
+      - build
+      - group: deploy
+        when: 'x'`
+	cfg, err := NewConfig([]byte(valid))
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]RunEntry{{Group: "build"}, {Group: "deploy", When: "x"}},
+		cfg.Flows["f"].Run,
+	)
+
+	errCases := []struct {
+		name    string
+		doc     string
+		wantErr string
+	}{
+		{
+			name: "unexpected key",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - group: deploy
+        command: ./x.sh`,
+			wantErr: `unexpected key "command"`,
+		},
+		{
+			name: "missing group",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - when: 'x'`,
+			wantErr: "missing 'group'",
+		},
+		{
+			name: "wrong node kind",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - [nested]`,
+			wantErr: "must be a group name or a {group, when} map",
+		},
+	}
+	for _, tc := range errCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewConfig([]byte(tc.doc))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+func TestFlowMembersDAGFromRunEntries(t *testing.T) {
+	t.Parallel()
+	f := Flow{
+		Mode: ModeDAG,
+		Run:  []RunEntry{{Group: "build"}, {Group: "deploy", When: "x"}},
+	}
+	assert.Equal(t, []string{"build", "deploy"}, f.Members())
 }

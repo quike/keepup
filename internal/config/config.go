@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -109,16 +110,27 @@ func (g *Group) UseShell() bool { return g.Shell != "" }
 // Exactly one of Steps or Run must be set, matching Mode:
 //   - Mode == ModeStep (default): use Steps
 //   - Mode == ModeDAG:            use Run
+//
+// Timeout and Retries form a default control envelope applied to every group
+// in the flow. In step mode a Step may override them for its own wave; in dag
+// mode the flow-level values are the only knob (there are no steps).
 type Flow struct {
 	Description string   `yaml:"description,omitempty"`
 	Mode        Mode     `yaml:"mode,omitempty"`
 	Steps       []Step   `yaml:"steps,omitempty"`
 	Run         []string `yaml:"run,omitempty"`
+	Timeout     string   `yaml:"timeout,omitempty"`
+	Retries     int      `yaml:"retries,omitempty"`
 }
 
 // Step is one execution wave inside a step-mode Flow.
+//
+// Timeout (a Go duration string, e.g. "30s") and Retries override the flow's
+// envelope for this wave. An empty Timeout / zero Retries means "inherit".
 type Step struct {
-	Run []string `yaml:"run"`
+	Run     []string `yaml:"run"`
+	Timeout string   `yaml:"timeout,omitempty"`
+	Retries int      `yaml:"retries,omitempty"`
 }
 
 // NewConfig parses YAML bytes into a Config and validates the schema.
@@ -254,8 +266,46 @@ func (c *Config) validateFlow(name string, f *Flow, groups map[string]*Group) er
 			return fmt.Errorf("flow %q: group %q is not defined", name, member)
 		}
 	}
+	if err := validateEnvelope(name, f); err != nil {
+		return err
+	}
 	// Persist the normalised Mode back to the map.
 	c.Flows[name] = *f
+	return nil
+}
+
+// validateEnvelope checks the timeout/retries control envelope on a flow and
+// its steps: timeouts must be valid Go durations and retries non-negative.
+func validateEnvelope(name string, f *Flow) error {
+	if err := checkTimeout(f.Timeout); err != nil {
+		return fmt.Errorf("flow %q: %w", name, err)
+	}
+	if f.Retries < 0 {
+		return fmt.Errorf("flow %q: retries must be >= 0", name)
+	}
+	for i := range f.Steps {
+		s := &f.Steps[i]
+		if err := checkTimeout(s.Timeout); err != nil {
+			return fmt.Errorf("flow %q step %d: %w", name, i+1, err)
+		}
+		if s.Retries < 0 {
+			return fmt.Errorf("flow %q step %d: retries must be >= 0", name, i+1)
+		}
+	}
+	return nil
+}
+
+func checkTimeout(s string) error {
+	if s == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid timeout %q: %w", s, err)
+	}
+	if d < 0 {
+		return fmt.Errorf("timeout %q must not be negative", s)
+	}
 	return nil
 }
 

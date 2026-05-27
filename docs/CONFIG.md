@@ -46,14 +46,14 @@ settings:
     pretty: true # true = human; false = JSON lines.
 ```
 
-| Field             | Default          | Notes                                                                                                                         |
-| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `dry-run`         | `false`          | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
-| `working-dir`     | `""`             | Currently reserved. Not consumed by the runner yet.                                                                           |
-| `max-concurrency` | `0` (unbounded)  | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
-| `cache-dir`       | `.keepup-cache`  | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)).                                    |
-| `logging.level`   | `info`           | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
-| `logging.pretty`  | `false`          | `true` for the human renderer, `false` for one JSON object per line.                                                          |
+| Field             | Default         | Notes                                                                                                                         |
+| ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `dry-run`         | `false`         | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
+| `working-dir`     | `""`            | Currently reserved. Not consumed by the runner yet.                                                                           |
+| `max-concurrency` | `0` (unbounded) | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
+| `cache-dir`       | `.keepup-cache` | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)).                                    |
+| `logging.level`   | `info`          | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
+| `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line.                                                          |
 
 ---
 
@@ -96,8 +96,8 @@ groups:
 | `env`         | map        | no       | Per-group env overrides; applied on top of the global `env`.                                                            |
 | `shell`       | string     | no       | When non-empty, the named shell program runs `command + params` as a single shell-interpreted line (opt-in shell mode). |
 | `description` | string     | no       | Free text used by `keepup list groups`.                                                                                 |
-| `require`     | string     | no       | Predicate command; non-zero exit fails the group before it runs (see [Gating](#gating-skip-if-and-require)).             |
-| `skip-if`     | string     | no       | Predicate command; exit 0 skips the group (see [Gating](#gating-skip-if-and-require)).                                   |
+| `require`     | string     | no       | Predicate command; non-zero exit fails the group before it runs (see [Gating](#gating-skip-if-and-require)).            |
+| `skip-if`     | string     | no       | Predicate command; exit 0 skips the group (see [Gating](#gating-skip-if-and-require)).                                  |
 | `cache`       | map        | no       | Skip the group when declared inputs are unchanged (see [Caching](#caching)).                                            |
 
 ### Direct exec vs. shell mode
@@ -164,9 +164,9 @@ groups:
     skip-if: "test -d /var/cache/app" # exit 0 → skip the group entirely
 ```
 
-| Field | Meaning | On match |
-|-------|---------|----------|
-| `require` | Precondition that must hold | Non-zero exit → the group (and its flow) fails with a clear error. |
+| Field     | Meaning                                   | On match                                                                                                |
+| --------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `require` | Precondition that must hold               | Non-zero exit → the group (and its flow) fails with a clear error.                                      |
 | `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped; its output is the last cached value if `cache:` is set, otherwise empty. |
 
 Evaluation order per group: `require` → `skip-if` → `cache` → run. In
@@ -191,11 +191,11 @@ groups:
       writes: ["bin/keepup"] # optional; must still exist for a hit
 ```
 
-| Field | Default | Meaning |
-|-------|---------|---------|
-| `method` | `hash` | `hash` reads file contents (correct); `mtime` uses modtime+size (faster, coarser). |
-| `reads` | — (required) | Input paths/globs. The fingerprint also folds in `command` + `params`, so changing the command busts the cache. |
-| `writes` | `[]` | Output paths/globs. If any declared output is missing, the cache is treated as a miss and the group re-runs. |
+| Field    | Default      | Meaning                                                                                                         |
+| -------- | ------------ | --------------------------------------------------------------------------------------------------------------- |
+| `method` | `hash`       | `hash` reads file contents (correct); `mtime` uses modtime+size (faster, coarser).                              |
+| `reads`  | — (required) | Input paths/globs. The fingerprint also folds in `command` + `params`, so changing the command busts the cache. |
+| `writes` | `[]`         | Output paths/globs. If any declared output is missing, the cache is treated as a miss and the group re-runs.    |
 
 Mechanics:
 
@@ -276,6 +276,42 @@ When should you use each?
 Both modes share the same `Runner`, output capture, env merging,
 `max-concurrency`, and `--dry-run` semantics; they only differ at
 scheduling time.
+
+### Timeout and retries
+
+A flow can declare a control envelope that wraps each group's command run:
+
+```yaml
+flows:
+  release:
+    timeout: 10m # default per-group timeout for the whole flow
+    retries: 1 # default retries on failure
+    steps:
+      - run: [build]
+        timeout: 5m # override for this wave
+        retries: 2
+      - run: [smoke]
+        timeout: 30s
+```
+
+| Field     | Where            | Meaning                                                                                                                 |
+| --------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `timeout` | flow and/or step | A Go duration (`30s`, `5m`, `1h`). Each command **attempt** is cancelled if it exceeds this. Empty/absent = no timeout. |
+| `retries` | flow and/or step | Number of **additional** attempts after the first failure. `0` = no retry.                                              |
+
+Resolution: a step's non-empty `timeout` / non-zero `retries` override the
+flow defaults; otherwise the flow values apply. In **dag mode** there are no
+steps, so the flow-level values are the only envelope.
+
+Semantics:
+
+- The envelope wraps only the **command run** — gating predicates (`require`,
+  `skip-if`) and cache lookups are not retried or timed out.
+- Each retry attempt gets its own fresh timeout.
+- Between attempts there is a short backoff (`base × attempt`); it respects
+  Ctrl-C / context cancellation.
+- A cache write happens only after a successful attempt, so a timed-out or
+  failed run never poisons the cache.
 
 ---
 

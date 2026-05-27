@@ -28,7 +28,12 @@ type Engine struct {
 	maxConcurrency int
 	dryRun         bool
 	noCache        bool
+	retryBackoff   time.Duration
 }
+
+// DefaultRetryBackoff is the base delay between retry attempts; the delay for
+// attempt N is DefaultRetryBackoff * N.
+const DefaultRetryBackoff = 250 * time.Millisecond
 
 // Option configures an Engine.
 type Option func(*Engine)
@@ -57,6 +62,10 @@ func WithLogger(l logger.Logger) Option { return func(e *Engine) { e.log = l } }
 // WithDryRun forces dry-run mode regardless of the config flag.
 func WithDryRun(dry bool) Option { return func(e *Engine) { e.dryRun = dry } }
 
+// WithRetryBackoff overrides the base retry backoff (delay for attempt N is
+// base*N). Primarily useful in tests to avoid real sleeps.
+func WithRetryBackoff(d time.Duration) Option { return func(e *Engine) { e.retryBackoff = d } }
+
 // New constructs an Engine. The config pointer is held by reference; do not
 // mutate it for the lifetime of the Engine.
 func New(cfg *config.Config, opts ...Option) *Engine {
@@ -79,6 +88,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 		log:            logger.Nop(),
 		maxConcurrency: cfg.Settings.MaxConcurrency,
 		dryRun:         cfg.Settings.DryRun,
+		retryBackoff:   DefaultRetryBackoff,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -101,16 +111,42 @@ func (e *Engine) RunFlow(ctx context.Context, flowName string) error {
 	if err != nil {
 		return err
 	}
+	flow := e.cfg.Flows[flowName]
 	e.log.Info("starting flow", "flow", flowName, "mode", string(p.Mode))
 
 	switch p.Mode {
 	case config.ModeStep:
-		return e.runStepPlan(ctx, p)
+		return e.runStepPlan(ctx, p, &flow)
 	case config.ModeDAG:
-		return e.runDAGPlan(ctx, p)
+		return e.runDAGPlan(ctx, p, &flow)
 	default:
 		return fmt.Errorf("flow %q: unknown mode %q", flowName, p.Mode)
 	}
+}
+
+// envelope is the resolved control envelope for a group's command execution.
+type envelope struct {
+	timeout time.Duration
+	retries int
+}
+
+// resolveEnvelope computes the effective timeout/retries for a wave. A step's
+// non-empty timeout / non-zero retries override the flow defaults; otherwise
+// the flow values apply. step may be nil (dag mode).
+func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
+	timeout, retries := flow.Timeout, flow.Retries
+	if step != nil {
+		if step.Timeout != "" {
+			timeout = step.Timeout
+		}
+		if step.Retries != 0 {
+			retries = step.Retries
+		}
+	}
+	// Durations are validated at config load, so a parse error here is
+	// impossible; treat any residual error as "no timeout".
+	d, _ := time.ParseDuration(timeout)
+	return envelope{timeout: d, retries: retries}
 }
 
 // runGroup decides whether and how to execute a group. The decision order is:
@@ -122,8 +158,9 @@ func (e *Engine) RunFlow(ctx context.Context, flowName string) error {
 //  5. otherwise  → invoke the runner and persist output (+ cache entry)
 //
 // Skipped or cache-hit groups still publish an output value so downstream
-// {{ output.X }} references resolve.
-func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string) error {
+// {{ output.X }} references resolve. The command run (only) is wrapped with the
+// envelope's per-attempt timeout and bounded retries.
+func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string, env envelope) error {
 	expanded := make([]string, len(group.Params))
 	for i, p := range group.Params {
 		expanded[i] = e.expander.Expand(p, baseline)
@@ -157,7 +194,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	}
 
 	e.log.Info("running group", "group", group.Name, "command", group.Command, "params", expanded)
-	out, err := e.runner.Run(ctx, group, expanded, e.cfg.Env)
+	out, err := e.execWithEnvelope(ctx, group, expanded, env)
 	if err != nil {
 		e.log.Error("group failed", "group", group.Name, "err", err.Error(), "output", out)
 		return err
@@ -166,6 +203,39 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	e.outputs.Set(group.Name, out)
 	e.cacheStore(group, expanded, out)
 	return nil
+}
+
+// execWithEnvelope runs the group's command, applying a per-attempt timeout and
+// retrying up to env.retries additional times on failure. Backoff between
+// attempts respects ctx cancellation.
+func (e *Engine) execWithEnvelope(ctx context.Context, group *config.Group, params []string, env envelope) (string, error) {
+	attempts := 1 + env.retries
+	var (
+		out string
+		err error
+	)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		runCtx := ctx
+		cancel := context.CancelFunc(func() {})
+		if env.timeout > 0 {
+			runCtx, cancel = context.WithTimeout(ctx, env.timeout)
+		}
+		out, err = e.runner.Run(runCtx, group, params, e.cfg.Env)
+		cancel()
+		if err == nil {
+			return out, nil
+		}
+		if attempt < attempts {
+			e.log.Warn("group attempt failed; retrying",
+				"group", group.Name, "attempt", attempt, "of", attempts, "err", err.Error())
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(e.retryBackoff * time.Duration(attempt)):
+			}
+		}
+	}
+	return out, err
 }
 
 // cacheLookup returns the stored entry when caching is enabled for the group,

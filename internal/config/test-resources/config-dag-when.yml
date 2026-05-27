@@ -1,0 +1,25 @@
+---
+# Exercises dag-mode per-group `when:` and skip cascade:
+#   - deploy is gated on test's output (when: ref creates a test -> deploy edge)
+#   - report consumes deploy's output (deploy -> report edge); if deploy is
+#     skipped, report cascade-skips because its producer never ran.
+version: 2
+
+default: ci
+
+groups:
+  - { name: build, command: echo, params: ["built"] }
+  - { name: test, command: echo, params: ["pass"] }
+  - { name: deploy, command: echo, params: ["deploying"] }
+  - { name: report, command: echo, params: ['{{ output "deploy" }}'] }
+
+flows:
+  ci:
+    description: "Conditional deploy gated on test; report consumes deploy output"
+    mode: dag
+    run:
+      - build
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'
+      - report

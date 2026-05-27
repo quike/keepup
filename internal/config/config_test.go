@@ -803,6 +803,21 @@ flows:
 	}
 }
 
+func TestLoadDAGWhenFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-dag-when.yml")
+	require.NoError(t, err)
+
+	f := cfg.Flows["ci"]
+	assert.Equal(t, ModeDAG, f.Mode)
+	assert.Equal(t, []RunEntry{
+		{Group: "build"},
+		{Group: "test"},
+		{Group: "deploy", When: `{{ eq (output "test") "pass" }}`},
+		{Group: "report"},
+	}, f.Run)
+}
+
 func TestFlowMembersDAGFromRunEntries(t *testing.T) {
 	t.Parallel()
 	f := Flow{

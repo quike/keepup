@@ -345,6 +345,22 @@ watch started are the one gap — restart watch if you add a whole new source ro
 
 ## CLI
 
+### How do I get started quickly?
+
+`keepup init` writes a small, valid starter `keepup.yml`:
+
+```sh
+keepup init            # → ./keepup.yml (project-local)
+keepup init --global   # → ~/.config/keepup/keepup.yml (the default path)
+keepup init --force    # overwrite an existing file
+```
+
+`./keepup.yml` is convenient for a repo you'll run with `keepup run --config keepup.yml`
+(or from that directory). `--global` writes to the path keepup reads when no
+`--config` is given, so afterward a bare `keepup run` just works. `--global`
+and an explicit path are mutually exclusive. The scaffold defines two groups
+and a step flow that demonstrates output piping, and it's guaranteed to parse.
+
 ### What replaces the old `--group <name>` flag?
 
 Declare a flow that runs just that group:

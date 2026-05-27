@@ -12,9 +12,9 @@ keepup runs YAML-declared **groups** of commands composed into named **flows**.
 Groups are atomic and reusable; flows decide how they run — either as ordered
 parallel waves (**step mode**) or scheduled automatically from the data
 dependencies between them (**dag mode**). Data flows between groups through
-`{{ output.<name> }}` references, which keepup validates up front. A single
-binary, no runtime, safe-by-default execution (no shell unless you ask for it),
-and incremental re-runs via content-based caching.
+`{{ output "name" }}` references — rendered by a Go-template + sprig engine, and
+validated up front. A single binary, no runtime, safe-by-default execution (no
+shell unless you ask for it), and incremental re-runs via content-based caching.
 
 ## Features
 
@@ -22,7 +22,8 @@ and incremental re-runs via content-based caching.
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | **Groups + flows**       | Reusable command units composed into many named pipelines in one file — no duplication.                                     |
 | **Two scheduling modes** | `step` (explicit parallel waves with barriers) or `dag` (topological, inferred from `{{ output.X }}` data deps).            |
-| **Output piping**        | Pass one group's captured stdout into another via `{{ output.name }}`, validated at load time.                              |
+| **Output piping**        | Pass one group's captured stdout into another via `{{ output "name" }}`, validated at load time.                            |
+| **Templating**           | `command`/`params` are Go templates with [sprig](https://masterminds.github.io/sprig/): `{{ output "sha" \| trunc 7 }}`, `{{ env "CI" \| default "local" }}`. Legacy `{{ output.X }}` still works. |
 | **Caching**              | Per-group `cache: { reads, writes }` fingerprints inputs (hash or mtime) and skips unchanged work, replaying stored output. |
 | **Watch mode**           | `keepup watch` re-runs a flow on file changes (using each group's `cache.reads`); caching makes unaffected groups no-ops.   |
 | **Gating**               | `require:` (must pass) and `skip-if:` (skip when already done) predicates short-circuit a group before it runs.             |

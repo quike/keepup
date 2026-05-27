@@ -68,7 +68,8 @@ func emitMermaid(out io.Writer, flowName string, cfg *config.Config, flow *confi
 	for _, m := range members {
 		g := cfg.GroupByName(m)
 		seen := make(map[string]struct{})
-		for _, ref := range config.ExtractRefs(g) {
+		refs, _ := config.ExtractRefs(g) // config already validated these templates
+		for _, ref := range refs {
 			if _, in := memberSet[ref]; !in {
 				continue
 			}

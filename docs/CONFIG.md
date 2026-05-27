@@ -149,6 +149,48 @@ Reference rules:
 These rules are enforced at parse time (`keepup validate`), not at run time,
 so typos and ordering bugs surface immediately.
 
+### Templating (functions, pipes, sprig)
+
+`command` and `params` are rendered as **Go templates** with the
+[sprig](https://masterminds.github.io/sprig/) function library, plus two
+keepup helpers:
+
+| Function        | Returns                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| `output "name"` | The captured stdout of group `name` (whitespace-trimmed).                  |
+| `env "KEY"`     | A value from the merged keepup environment (global `env:` + group `env:`). |
+
+```yaml
+groups:
+  - name: version
+    command: git
+    params: [rev-parse, --short, HEAD]
+  - name: tag
+    command: echo
+    params:
+      - 'release-{{ output "version" }}' # function form
+      - '{{ output "version" | upper }}' # sprig pipe
+      - '{{ env "CI" | default "local" }}' # default when unset
+```
+
+Backward compatibility: the original `{{ output.<name> }}` form still works —
+it's rewritten to `{{ output "<name>" }}` internally, so existing configs need
+no changes. The two forms are interchangeable.
+
+Notes:
+
+- Both `command` and `params` are expanded; the resolved command is what the
+  runner executes, caches, and logs.
+- Because params are now templates, a **literal** `{{` must be escaped as
+  `{{ "{{" }}`. This only matters if you genuinely need braces in an argument.
+- A malformed template (bad syntax, unknown function) is rejected at
+  config-load by `keepup validate`.
+- `output`/`env` are static enough to drive the dependency graph: keepup
+  extracts references by parsing the template, so `output "x"`, piped forms,
+  and refs inside `{{ if }}`/`{{ range }}` are all detected. A dynamically
+  computed name (e.g. `output (printf "g%d" 1)`) cannot be tracked and won't
+  register as a dependency.
+
 ### Gating: `skip-if` and `require`
 
 Two optional predicates let a group decide whether it should run. Both are

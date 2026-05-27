@@ -2,27 +2,33 @@ package config
 
 import (
 	"fmt"
-	"regexp"
+
+	"github.com/quike/keepup/internal/template"
 )
 
-// outputRefRe matches "{{ output.<name> }}" with arbitrary inner whitespace.
-// Names accept alphanumerics, dashes, underscores, and dots.
-var outputRefRe = regexp.MustCompile(`{{\s*output\.([A-Za-z0-9._-]+)\s*}}`)
-
-// ExtractRefs returns every group name referenced by a group's params or
-// command via "{{ output.<name> }}". Duplicates are preserved by position.
-func ExtractRefs(g *Group) []string {
+// ExtractRefs returns every group name referenced by a group's command or
+// params via the template output() function (or the legacy "{{ output.X }}"
+// form). Duplicates are preserved by position. An error is returned when any
+// template string is malformed, surfacing the problem at config-load time.
+func ExtractRefs(g *Group) ([]string, error) {
 	out := make([]string, 0)
-	collect := func(s string) {
-		for _, m := range outputRefRe.FindAllStringSubmatch(s, -1) {
-			out = append(out, m[1])
+	collect := func(s string) error {
+		refs, err := template.Refs(s)
+		if err != nil {
+			return fmt.Errorf("group %q: %w", g.Name, err)
+		}
+		out = append(out, refs...)
+		return nil
+	}
+	if err := collect(g.Command); err != nil {
+		return nil, err
+	}
+	for _, p := range g.Params {
+		if err := collect(p); err != nil {
+			return nil, err
 		}
 	}
-	collect(g.Command)
-	for _, p := range g.Params {
-		collect(p)
-	}
-	return out
+	return out, nil
 }
 
 // ValidateReferences runs strict-mode reference checks on every flow:
@@ -66,7 +72,11 @@ func (c *Config) checkStepRefs(flowName string, f *Flow, memberSet map[string]st
 			if g == nil {
 				return fmt.Errorf("flow %q step %d: group %q is not defined", flowName, stepIdx+1, member)
 			}
-			for _, ref := range ExtractRefs(g) {
+			refs, err := ExtractRefs(g)
+			if err != nil {
+				return fmt.Errorf("flow %q step %d: %w", flowName, stepIdx+1, err)
+			}
+			for _, ref := range refs {
 				if _, ok := memberSet[ref]; !ok {
 					return fmt.Errorf(
 						"flow %q step %d: group %q references {{ output.%s }}, but %q is not part of this flow",
@@ -99,7 +109,11 @@ func (c *Config) checkDAGRefs(flowName string, members []string, memberSet map[s
 		if g == nil {
 			return fmt.Errorf("flow %q: group %q is not defined", flowName, m)
 		}
-		for _, ref := range ExtractRefs(g) {
+		refs, err := ExtractRefs(g)
+		if err != nil {
+			return fmt.Errorf("flow %q: %w", flowName, err)
+		}
+		for _, ref := range refs {
 			if _, ok := memberSet[ref]; !ok {
 				return fmt.Errorf(
 					"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",

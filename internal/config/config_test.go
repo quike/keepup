@@ -353,6 +353,26 @@ func TestLoadConfig_EnvelopeResources(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_TemplateResource(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-template.yml")
+	require.NoError(t, err)
+	require.Len(t, cfg.Groups, 6)
+
+	// Every templating form must register "producer" as a reference so the
+	// flow validates (producer is in an earlier step) and the DAG is correct.
+	for _, name := range []string{"legacy-consumer", "func-consumer", "sprig-consumer", "cmd-consumer"} {
+		refs, rerr := ExtractRefs(cfg.GroupByName(name))
+		require.NoError(t, rerr)
+		assert.Equal(t, []string{"producer"}, refs, "group %q", name)
+	}
+
+	// env-consumer references no group (only env), so it has no deps.
+	refs, err := ExtractRefs(cfg.GroupByName("env-consumer"))
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
 func TestLoadConfig(t *testing.T) {
 	t.Run("valid file", func(t *testing.T) {
 		dir := t.TempDir()
@@ -505,6 +525,30 @@ func TestReferenceValidation(t *testing.T) {
 	}
 }
 
+func TestNewConfig_RejectsMalformedTemplate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "step mode malformed param template",
+			yaml: "version: 2\ngroups:\n  - name: a\n    command: echo\n    params: ['{{ bogusfunc }}']\nflows:\n  f:\n    steps:\n      - run: [a]\n", //nolint:lll // inline YAML fixture
+		},
+		{
+			name: "dag mode malformed command template",
+			yaml: "version: 2\ngroups:\n  - name: a\n    command: '{{ output \"x\" '\nflows:\n  f:\n    mode: dag\n    run: [a]\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewConfig([]byte(tc.yaml))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "parse template")
+		})
+	}
+}
+
 func TestExtractRefs(t *testing.T) {
 	t.Parallel()
 	g := &Group{
@@ -516,7 +560,8 @@ func TestExtractRefs(t *testing.T) {
 			"{{   output.d   }}",
 		},
 	}
-	got := ExtractRefs(g)
+	got, err := ExtractRefs(g)
+	require.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c", "d"}, got)
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/template"
 )
 
 // fakeRunner records invocations and returns scripted results.
@@ -249,9 +250,9 @@ func TestEngine_Options(t *testing.T) {
 
 	t.Run("WithExpander is honored", func(t *testing.T) {
 		called := false
-		var exp expanderFunc = func(s string, _ map[string]string) string {
+		var exp expanderFunc = func(s string, _ template.Data) (string, error) {
 			called = true
-			return s
+			return s, nil
 		}
 		cfg2 := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo", Params: []string{"hi"}}}, [][]string{{"a"}})
 		e := New(cfg2, WithExpander(exp), WithRunner(&fakeRunner{outputs: map[string]string{"a": ""}}))
@@ -260,9 +261,9 @@ func TestEngine_Options(t *testing.T) {
 	})
 }
 
-type expanderFunc func(string, map[string]string) string
+type expanderFunc func(string, template.Data) (string, error)
 
-func (f expanderFunc) Expand(s string, o map[string]string) string { return f(s, o) }
+func (f expanderFunc) Expand(s string, d template.Data) (string, error) { return f(s, d) }
 
 type captureLogger struct {
 	mu    sync.Mutex

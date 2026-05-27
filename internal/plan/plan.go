@@ -61,7 +61,9 @@ func buildDAGEdges(cfg *config.Config, flow *config.Flow, p *Plan) {
 	for _, m := range flow.Run {
 		g := cfg.GroupByName(m)
 		seenPred := make(map[string]struct{})
-		for _, ref := range config.ExtractRefs(g) {
+		// Refs cannot error here: NewConfig validated every template already.
+		refs, _ := config.ExtractRefs(g)
+		for _, ref := range refs {
 			if _, in := memberSet[ref]; !in {
 				continue // ValidateReferences would have rejected this
 			}

@@ -168,6 +168,26 @@ and stderr, in the order they were written. If your downstream depends on a
 specific format, make the upstream produce a stable format (one line, JSON,
 etc.).
 
+### Can I use functions/pipes in params, not just `{{ output.X }}`?
+
+Yes. `command` and `params` are Go templates with the sprig library plus
+`output "name"` and `env "KEY"` helpers, so `{{ output "sha" | trunc 7 }}`,
+`{{ env "CI" | default "local" }}`, conditionals, and the rest of sprig all
+work. The legacy `{{ output.X }}` form is still accepted (rewritten to
+`{{ output "X" }}` under the hood), so existing configs are unaffected.
+
+### My param has a literal `{{` and now errors — why?
+
+Params are templates now, so a bare `{{` starts a template action. Escape a
+literal with `{{ "{{" }}`. This only comes up if you genuinely need brace
+characters in an argument; normal shell/command text is unaffected.
+
+### Why did my `{{ output.X }}` stop trimming / start trimming?
+
+It still trims. `output` returns the referenced group's stdout with
+surrounding whitespace removed, exactly like the original expander — so a
+producer printing `banana\n` substitutes as `banana`.
+
 ---
 
 ## Execution

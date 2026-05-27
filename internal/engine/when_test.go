@@ -74,6 +74,20 @@ func TestEngine_When_ReferencesEarlierOutput(t *testing.T) {
 	assert.Equal(t, []string{"producer:", "gated:"}, r.calls)
 }
 
+func TestEngine_When_FromFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../config/test-resources/config-when.yml")
+	require.NoError(t, err)
+
+	r := &fakeRunner{outputs: map[string]string{"tests": "PASS\n"}}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), "ci"))
+
+	// build runs (tests PASS), deploy runs (DEPLOY=true), rollback is skipped
+	// (FORCE_ROLLBACK unset), notify always runs.
+	assert.Equal(t, []string{"tests:PASS", "build:built", "deploy:deploying", "notify:notifying"}, r.calls)
+}
+
 func TestEngine_When_BadTemplateErrors(t *testing.T) {
 	t.Parallel()
 	e := New(stepFlowWithWhen(`{{ fail "boom" }}`), WithRunner(&fakeRunner{}))

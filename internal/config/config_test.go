@@ -594,6 +594,19 @@ flows:
 	}
 }
 
+func TestLoadConfig_WhenResource(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-when.yml")
+	require.NoError(t, err)
+	steps := cfg.Flows["ci"].Steps
+	require.Len(t, steps, 5)
+	assert.Empty(t, steps[0].When) // tests: no gate
+	assert.Equal(t, `{{ output "tests" | contains "PASS" }}`, steps[1].When)
+	assert.Equal(t, `{{ eq (env "DEPLOY") "true" }}`, steps[2].When)
+	assert.Equal(t, `{{ env "FORCE_ROLLBACK" }}`, steps[3].When)
+	assert.Empty(t, steps[4].When) // notify: always runs
+}
+
 func TestExtractRefs(t *testing.T) {
 	t.Parallel()
 	g := &Group{

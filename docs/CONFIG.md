@@ -393,6 +393,7 @@ at an existing flow; otherwise the file is rejected at parse time.
 ## CLI subcommands
 
 ```sh
+keepup init [path]           # write a starter keepup.yml (--global for ~/.config, --force to overwrite)
 keepup run [flow]            # run the named flow, or the default
 keepup watch [flow]          # re-run a flow when its cache.reads inputs change
 keepup list                  # show declared flows + descriptions

@@ -74,6 +74,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&opts.dryRun, "dry-run", "d", false, "Dry run mode (no commands are executed)")
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "Verbose output")
 
+	root.AddCommand(newInitCmd(stdout))
 	root.AddCommand(newRunCmd(opts))
 	root.AddCommand(newWatchCmd(opts, stdout))
 	root.AddCommand(newListCmd(opts, stdout))

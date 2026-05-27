@@ -376,6 +376,66 @@ Then `keepup run quick`. This is more discoverable (`keepup list` shows it),
 composable (you can build it up over time), and consistent with how every
 other invocation works.
 
+### What is the JSON event stream and what can I use it for?
+
+When keepup runs a flow it prints human logs. With `--events` it *also* emits a
+second, separate stream: **one JSON object per line, one line per thing that
+happens.** That's the whole idea.
+
+```sh
+keepup run ci --events run.jsonl
+```
+
+`run.jsonl` then contains:
+
+```json
+{"event":"flow.start","flow":"ci","mode":"step","time":"..."}
+{"event":"group.start","group":"tests","time":"..."}
+{"event":"group.end","group":"tests","status":"ok","durationMs":1240,"time":"..."}
+{"event":"group.start","group":"deploy","time":"..."}
+{"event":"group.end","group":"deploy","status":"skipped","durationMs":0,"time":"..."}
+{"event":"flow.end","flow":"ci","status":"ok","durationMs":1310,"time":"..."}
+```
+
+Each line tells you **what happened** (`event`), **to which group**, **how it
+ended** (`status`: `ok` / `failed` / `skipped` / `cache-hit` / `dry-run`), and
+**how long it took** (`durationMs`).
+
+**Why separate from logs?** Logs are for humans (prose, colors, wording that may
+change). Events are for machines (fixed fields, stable shape). Parsing human
+logs is fragile; the event stream is a contract you can build on.
+
+**What it's good for:**
+
+| Use | How |
+|-----|-----|
+| CI dashboards / timing | Read `durationMs` per group to find the bottleneck and track it over time. |
+| Notifications | Watch for `flow.end` with `status:"failed"` and alert. |
+| Cache effectiveness | Count `cache-hit` vs `ok` to see how much work was skipped. |
+| Audit / history | Append the `.jsonl` files to keep a record of every run. |
+| Custom tooling | Anything that needs to react to a run without scraping logs. |
+
+**Example one-liners** (using `jq`, but any language parses JSON lines):
+
+```sh
+# Did the flow fail?
+keepup run ci --events - | jq -e 'select(.event=="flow.end" and .status=="failed")' && echo ALERT
+
+# Slowest group
+keepup run ci --events - | jq 'select(.event=="group.end")' | jq -s 'max_by(.durationMs)'
+
+# How many cache hits?
+keepup run ci --events - | jq 'select(.status=="cache-hit")' | wc -l
+```
+
+It's independent of the human/JSON logging (`settings.logging`) — logs are for
+people, events are for tooling. If you only run keepup by hand in a terminal you
+don't need it; it shines when something *else* watches your runs.
+
+Note: use `--events run.jsonl` (a file) or `--events -` (stdout). On stdout the
+events mix with your commands' own output, so a file is usually cleaner for real
+use.
+
 ### How do I see what flows and groups are available?
 
 ```sh

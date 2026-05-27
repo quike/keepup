@@ -423,6 +423,7 @@ Global flags:
 | Flag         | Purpose                                                            |
 | ------------ | ------------------------------------------------------------------ |
 | `--no-cache` | Ignore cached results and run every group (entries still refresh). |
+| `--events <path>` | Write a newline-delimited JSON event stream (`flow.start`/`group.end`/… with status + durationMs) to a file, or `-` for stdout. |
 
 `keepup graph <flow>` prints a Mermaid `graph TD` showing the data DAG that
 emerges from the `{{ output.X }}` references — useful as a sanity check

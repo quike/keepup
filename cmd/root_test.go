@@ -82,6 +82,30 @@ func TestRunCmd_NamedFlow(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 }
 
+func TestRunCmd_EventsToStdout(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg)
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"run", "f", "--config", cfgPath, "--dry-run", "--events", "-"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), `"event":"flow.start"`)
+	assert.Contains(t, out.String(), `"event":"group.end"`)
+}
+
+func TestRunCmd_EventsToFile(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg)
+	evPath := filepath.Join(t.TempDir(), "events.jsonl")
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"run", "f", "--config", cfgPath, "--dry-run", "--events", evPath})
+	require.NoError(t, cmd.Execute())
+	data, err := os.ReadFile(evPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"event":"flow.end"`)
+}
+
 func TestListCmd_Flows(t *testing.T) {
 	t.Parallel()
 	cfgPath := writeTempConfig(t, minimalCfg)

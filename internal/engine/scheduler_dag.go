@@ -115,7 +115,7 @@ func (s *dagScheduler) drainReady() {
 			return
 		case decisionSkip:
 			s.skipped[name] = true
-			s.engine.outputs.Set(name, result.RunResult{Status: resultStatusSkipped})
+			s.engine.outputs.Set(name, result.RunResult{Status: result.StatusSkipped})
 			s.engine.emitGroupSkipped(name, s.skipReason[name])
 			s.onDone(name, true)
 		case decisionRun:

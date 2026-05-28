@@ -82,7 +82,7 @@ func (r *ShellRunner) Run(ctx context.Context, g *config.Group, params []string,
 		Output:     captureCombined.String(),
 		ExitCode:   exitCode,
 		DurationMs: durationMs,
-		Status:     resultStatusOK,
+		Status:     result.StatusOK,
 	}
 	if runErr != nil {
 		return rr, fmt.Errorf("run %q: %w", g.Name, runErr)

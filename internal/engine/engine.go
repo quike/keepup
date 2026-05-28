@@ -38,17 +38,6 @@ type Engine struct {
 // attempt N is DefaultRetryBackoff * N.
 const DefaultRetryBackoff = 250 * time.Millisecond
 
-// RunResult.Status values stored in the OutputStore. These are the
-// model-layer statuses set on `result.RunResult` (distinct from the
-// observability-layer event statuses in events.go); "ok", "skipped",
-// "dry-run" coincide by value, while "cached" is unique to results.
-const (
-	resultStatusOK      = "ok"
-	resultStatusCached  = "cached"
-	resultStatusSkipped = "skipped"
-	resultStatusDryRun  = "dry-run"
-)
-
 // Option configures an Engine.
 type Option func(*Engine)
 
@@ -226,7 +215,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	if e.dryRun {
 		e.log.Info("[dry-run] would run",
 			"group", g.Name, "command", g.Command, "params", expanded, "shell", g.UseShell())
-		e.outputs.Set(g.Name, result.RunResult{Status: resultStatusDryRun})
+		e.outputs.Set(g.Name, result.RunResult{Status: result.StatusDryRun})
 		status = StatusDryRun
 		return nil
 	}
@@ -239,7 +228,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 
 	if g.SkipIf != "" {
 		if err = e.prober.Probe(ctx, g.SkipIf, e.cfg.Env); err == nil {
-			e.outputs.Set(g.Name, result.RunResult{Status: resultStatusSkipped})
+			e.outputs.Set(g.Name, result.RunResult{Status: result.StatusSkipped})
 			e.log.Info("group skipped", "group", g.Name, "reason", "skip-if", "predicate", g.SkipIf)
 			status = StatusSkipped
 			return nil
@@ -248,7 +237,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 
 	if fp, hit := e.cacheLookup(&g, expanded); hit {
 		cached := fp.Result
-		cached.Status = resultStatusCached
+		cached.Status = result.StatusCached
 		e.outputs.Set(g.Name, cached)
 		e.log.Info("cache hit", "group", g.Name, "fingerprint", fp.Fingerprint)
 		status = StatusCacheHit
@@ -262,7 +251,8 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 		return err
 	}
 	e.log.Trace("group output", "group", g.Name, "output", out.Output)
-	out.Status = resultStatusOK
+	// Runner sets Status to result.StatusOK on success; trust it so a future
+	// soft-fail Runner can return Status:"failed" without engine clobbering.
 	e.outputs.Set(g.Name, out)
 	e.cacheStore(&g, expanded, &out)
 	return nil

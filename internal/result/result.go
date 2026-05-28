@@ -27,7 +27,22 @@ type RunResult struct {
 	// DurationMs is wall-clock milliseconds for the command run. 0 for
 	// skipped and cache-hit groups.
 	DurationMs int64 `json:"durationMs,omitempty"`
-	// Status is one of "ok", "skipped", "cached", "dry-run". An empty Status
-	// indicates a never-stored group.
+	// Status is one of the Status* constants below. An empty Status indicates
+	// a never-stored group.
 	Status string `json:"status,omitempty"`
 }
+
+// Status values a RunResult may carry. External Runner implementations set
+// StatusOK on a normal run; the engine overrides with the appropriate value
+// at storage time for cached / skipped / dry-run paths.
+//
+// Note: these are intentionally distinct from the event-layer status
+// constants in internal/engine/events.go (e.g. "cache-hit" vs "cached"). The
+// event stream is a wire format with its own compatibility guarantees; the
+// model layer here is what user templates read via `(out "x").Status`.
+const (
+	StatusOK      = "ok"
+	StatusSkipped = "skipped"
+	StatusCached  = "cached"
+	StatusDryRun  = "dry-run"
+)

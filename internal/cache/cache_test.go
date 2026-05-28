@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/result"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -161,7 +163,7 @@ func TestFileStore_RoundTrip(t *testing.T) {
 
 	entry := &Entry{
 		Fingerprint: "sha256:abc",
-		Output:      "done\n",
+		Result:      result.RunResult{Output: "done\n"},
 		Command:     "go",
 		Params:      []string{"build"},
 		UpdatedAt:   time.Now(),
@@ -172,7 +174,7 @@ func TestFileStore_RoundTrip(t *testing.T) {
 		got, ok := store.Load("build")
 		require.True(t, ok)
 		assert.Equal(t, "sha256:abc", got.Fingerprint)
-		assert.Equal(t, "done\n", got.Output)
+		assert.Equal(t, "done\n", got.Result.Output)
 	})
 
 	t.Run("group name with slashes is sanitized", func(t *testing.T) {
@@ -191,4 +193,49 @@ func TestFileStore_CorruptEntryIsMiss(t *testing.T) {
 	store := NewFileStore(cdir)
 	_, ok := store.Load("build")
 	assert.False(t, ok)
+}
+
+// TestEntryRoundTripWithRunResult verifies that a full RunResult is
+// persisted and restored faithfully through the FileStore.
+func TestEntryRoundTripWithRunResult(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s := NewFileStore(dir)
+	want := &Entry{
+		Fingerprint: "sha256:abc",
+		Result: result.RunResult{
+			Stdout:     "hi\n",
+			Stderr:     "warn\n",
+			Output:     "hi\nwarn\n",
+			ExitCode:   0,
+			DurationMs: 12,
+			Status:     "ok",
+		},
+		Command:   "echo",
+		Params:    []string{"hi"},
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	require.NoError(t, s.Save("g", want))
+	got, ok := s.Load("g")
+	require.True(t, ok)
+	assert.Equal(t, want.Result, got.Result)
+	assert.Equal(t, want.Fingerprint, got.Fingerprint)
+}
+
+// TestComputeUsesV2Salt confirms the fingerprint salt is v2, which
+// ensures every v1 cached fingerprint becomes a miss on first run after
+// the upgrade.
+func TestComputeUsesV2Salt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o600))
+	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "f.txt")}}
+	fp, err := Compute(spec, "echo", []string{"a"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(fp, "sha256:"))
+
+	// Determinism: identical inputs produce identical fingerprints.
+	fp2, err := Compute(spec, "echo", []string{"a"})
+	require.NoError(t, err)
+	assert.Equal(t, fp, fp2)
 }

@@ -14,15 +14,16 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/result"
 )
 
 // Entry is a persisted cache record for one group.
 type Entry struct {
-	Fingerprint string    `json:"fingerprint"`
-	Output      string    `json:"output"`
-	Command     string    `json:"command"`
-	Params      []string  `json:"params"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	Fingerprint string           `json:"fingerprint"`
+	Result      result.RunResult `json:"result"`
+	Command     string           `json:"command"`
+	Params      []string         `json:"params"`
+	UpdatedAt   time.Time        `json:"updatedAt"`
 }
 
 // Store loads and saves cache entries keyed by group name.
@@ -39,7 +40,7 @@ func Compute(spec *config.Cache, command string, params []string) (string, error
 	h := sha256.New()
 	// Salt with command/params/method so a changed command busts the cache
 	// even when inputs are identical.
-	fmt.Fprintf(h, "v1\x00%s\x00%s\x00", spec.Method, command)
+	fmt.Fprintf(h, "v2\x00%s\x00%s\x00", spec.Method, command)
 	for _, p := range params {
 		fmt.Fprintf(h, "%s\x01", p)
 	}

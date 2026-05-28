@@ -125,3 +125,37 @@ func TestDAG_When_RenderErrorAbortsFlow(t *testing.T) {
 	assert.Contains(t, err.Error(), "boom")
 	assert.False(t, ranNames(r)["deploy"], "deploy must not run after its when: errored")
 }
+
+// TestDAG_SkippedGroupsAreStoredInOutputStore covers the structured-outputs
+// promise that (out "x").Status returns "skipped" for any skipped group.
+// Without this storage, downstream {{ (out "x").Status }} would observe an
+// empty Status (the zero value), which is reserved for never-declared groups.
+func TestDAG_SkippedGroupsAreStoredInOutputStore(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../config/test-resources/config-dag-when.yml")
+	require.NoError(t, err)
+
+	// test outputs "fail" -> deploy.when (eq output(test) "pass") false -> skip
+	// -> report cascade-skipped.
+	r := &fakeRunner{outputs: map[string]string{"build": "built", "test": "fail"}}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), "ci"))
+
+	store := e.Outputs()
+
+	deployRR, ok := store.Get("deploy")
+	require.True(t, ok, "directly when:-skipped deploy must be stored")
+	assert.Equal(t, "skipped", deployRR.Status)
+
+	reportRR, ok := store.Get("report")
+	require.True(t, ok, "cascade-skipped report must be stored")
+	assert.Equal(t, "skipped", reportRR.Status)
+
+	// Sanity: groups that ran are stored with Status "ok".
+	buildRR, ok := store.Get("build")
+	require.True(t, ok)
+	assert.Equal(t, "ok", buildRR.Status)
+	testRR, ok := store.Get("test")
+	require.True(t, ok)
+	assert.Equal(t, "ok", testRR.Status)
+}

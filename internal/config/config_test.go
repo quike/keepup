@@ -657,9 +657,9 @@ func TestGroupByName(t *testing.T) {
 	assert.Nil(t, cfg.GroupByName("missing"))
 }
 
-func TestRunEntryUnmarshal(t *testing.T) {
+func TestRunEntryUnmarshal_Valid(t *testing.T) {
 	t.Parallel()
-	valid := `version: 2
+	doc := `version: 2
 groups:
   - {name: build, command: echo}
   - {name: deploy, command: echo}
@@ -670,13 +670,16 @@ flows:
       - build
       - group: deploy
         when: 'x'`
-	cfg, err := NewConfig([]byte(valid))
+	cfg, err := NewConfig([]byte(doc))
 	require.NoError(t, err)
 	assert.Equal(t,
 		[]RunEntry{{Group: "build"}, {Group: "deploy", When: "x"}},
 		cfg.Flows["f"].Run,
 	)
+}
 
+func TestRunEntryUnmarshal_Errors(t *testing.T) {
+	t.Parallel()
 	errCases := []struct {
 		name    string
 		doc     string
@@ -727,6 +730,32 @@ flows:
       - ""`,
 			wantErr: "group name must not be empty",
 		},
+		{
+			// Bug #1 from self-review: silently accepted non-scalar values.
+			name: "when value is a mapping not a string",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - group: deploy
+        when:
+          nested: 'true'`,
+			wantErr: `"when" must be a string`,
+		},
+		{
+			// Bug #1: non-scalar 'group' value.
+			name: "group value is a sequence not a string",
+			doc: `version: 2
+groups: [{name: deploy, command: echo}]
+flows:
+  f:
+    mode: dag
+    run:
+      - group: [a, b]`,
+			wantErr: `"group" must be a string`,
+		},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -771,7 +800,9 @@ flows:
     run:
       - group: deploy
         when: '{{ output "lint" }}'`,
-			wantErr: "is not part of this flow",
+			// #12 from self-review: error must distinguish a when: source from a
+			// command-ref source, mirroring step mode ("when references ...").
+			wantErr: "when references",
 		},
 		{
 			name: "when ref forming a cycle is rejected",
@@ -801,6 +832,28 @@ flows:
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+// TestDAGDuplicateGroupRejected covers bug #2 from the self-review: a dag
+// flow with the same group listed twice silently accepted last-wins for the
+// when: predicate. The second entry now produces a clear validation error.
+func TestDAGDuplicateGroupRejected(t *testing.T) {
+	t.Parallel()
+	doc := `version: 2
+groups:
+  - {name: deploy, command: echo}
+flows:
+  ci:
+    mode: dag
+    run:
+      - group: deploy
+        when: '{{ env "A" }}'
+      - group: deploy
+        when: '{{ env "B" }}'`
+	_, err := NewConfig([]byte(doc))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `group "deploy"`)
+	assert.Contains(t, err.Error(), "duplicate")
 }
 
 func TestLoadDAGWhenFixture(t *testing.T) {

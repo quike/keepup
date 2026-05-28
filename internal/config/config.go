@@ -160,12 +160,18 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := node.Content[i].Value
-			val := node.Content[i+1].Value
+			valNode := node.Content[i+1]
 			switch key {
 			case "group":
-				r.Group = val
+				if valNode.Kind != yaml.ScalarNode {
+					return fmt.Errorf(`run entry: "group" must be a string`)
+				}
+				r.Group = valNode.Value
 			case "when":
-				r.When = val
+				if valNode.Kind != yaml.ScalarNode {
+					return fmt.Errorf(`run entry: "when" must be a string`)
+				}
+				r.When = valNode.Value
 			default:
 				return fmt.Errorf("run entry: unexpected key %q (commands are defined in groups:)", key)
 			}

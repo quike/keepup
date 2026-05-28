@@ -65,7 +65,8 @@ func buildDAGEdges(cfg *config.Config, flow *config.Flow, p *Plan) {
 
 	for i := range flow.Run {
 		m := flow.Run[i].Group
-		if w := flow.Run[i].When; w != "" {
+		w := flow.Run[i].When
+		if w != "" {
 			p.When[m] = w
 		}
 		seenPred := make(map[string]struct{})
@@ -86,7 +87,7 @@ func buildDAGEdges(cfg *config.Config, flow *config.Flow, p *Plan) {
 		for _, ref := range refs {
 			addEdge(ref)
 		}
-		if w := flow.Run[i].When; w != "" {
+		if w != "" {
 			whenRefs, _ := template.Refs(w)
 			for _, ref := range whenRefs {
 				addEdge(ref)

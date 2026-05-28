@@ -132,8 +132,17 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 	for _, m := range members {
 		inDeg[m] = 0
 	}
-	addEdge := func(ref, m string) error {
+	// addEdge records ref -> m in the data graph. fromWhen toggles the error
+	// phrasing so a `when:` reference reads "when references {{ output.X }}"
+	// (mirroring step mode), distinguishing it from a command/param reference.
+	addEdge := func(ref, m string, fromWhen bool) error {
 		if _, ok := memberSet[ref]; !ok {
+			if fromWhen {
+				return fmt.Errorf(
+					"flow %q: group %q: when references {{ output.%s }}, but %q is not part of this flow",
+					flowName, m, ref, ref,
+				)
+			}
 			return fmt.Errorf(
 				"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
 				flowName, m, ref, ref,
@@ -146,8 +155,20 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 		inDeg[m]++
 		return nil
 	}
+	// seen catches the same group listed twice in run: — both bare strings and
+	// {group, when} maps. With per-entry `when:` predicates, last-wins would
+	// silently swallow a predicate; reject it at load.
+	seen := make(map[string]struct{}, len(f.Run))
 	for i := range f.Run {
 		m := f.Run[i].Group
+		if _, dup := seen[m]; dup {
+			return fmt.Errorf(
+				"flow %q: group %q is listed more than once in run: (duplicate dag entries are not allowed)",
+				flowName, m,
+			)
+		}
+		seen[m] = struct{}{}
+
 		g := c.GroupByName(m)
 		if g == nil {
 			return fmt.Errorf("flow %q: group %q is not defined", flowName, m)
@@ -157,7 +178,7 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 			return fmt.Errorf("flow %q: %w", flowName, err)
 		}
 		for _, ref := range refs {
-			if err := addEdge(ref, m); err != nil {
+			if err := addEdge(ref, m, false); err != nil {
 				return err
 			}
 		}
@@ -168,7 +189,7 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 				return fmt.Errorf("flow %q: group %q: when: %w", flowName, m, werr)
 			}
 			for _, ref := range whenRefs {
-				if err := addEdge(ref, m); err != nil {
+				if err := addEdge(ref, m, true); err != nil {
 					return err
 				}
 			}

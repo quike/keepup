@@ -61,3 +61,33 @@ func TestDAG_When_RunsWhenTrue(t *testing.T) {
 		assert.True(t, ran[name], "%s should run when test passes", name)
 	}
 }
+
+// TestDAG_When_RenderErrorAbortsFlow covers gap #7 from the self-review: a
+// when: that parses cleanly but errors at render time must abort the flow
+// with the wrapped `flow %q: group %q: when: %w` message, cancel in-flight
+// work, and prevent dependents from running. Sprig's `fail` reliably returns
+// a render-time error.
+func TestDAG_When_RenderErrorAbortsFlow(t *testing.T) {
+	cfg := &config.Config{
+		Version: config.SchemaVersion,
+		Groups: []config.Group{
+			{Name: "build", Command: "echo"},
+			{Name: "deploy", Command: "echo"},
+		},
+		Flows: map[string]config.Flow{
+			"ci": {Mode: config.ModeDAG, Run: []config.RunEntry{
+				{Group: "build"},
+				{Group: "deploy", When: `{{ fail "boom" }}`},
+			}},
+		},
+	}
+	r := &fakeRunner{outputs: map[string]string{"build": "built"}}
+	e := New(cfg, WithRunner(r))
+	err := e.RunFlow(context.Background(), "ci")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `flow "ci"`)
+	assert.Contains(t, err.Error(), `group "deploy"`)
+	assert.Contains(t, err.Error(), "when:")
+	assert.Contains(t, err.Error(), "boom")
+	assert.False(t, ranNames(r)["deploy"], "deploy must not run after its when: errored")
+}

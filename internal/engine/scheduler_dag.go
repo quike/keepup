@@ -66,29 +66,39 @@ func (s *dagScheduler) onDone(name string, wasSkipped bool) {
 	}
 }
 
-// decide reports whether name should be skipped, evaluating its when: predicate
-// against a stable snapshot when one is declared. A predicate error records
-// schedErr, cancels the run, and reports skip=true to unwind the worklist
-// quickly.
-func (s *dagScheduler) decide(name string) bool {
+// decision is the outcome of evaluating a ready node — three-valued so the
+// caller doesn't have to disambiguate skip-vs-error via a side-effect field.
+type decision int
+
+const (
+	decisionRun  decision = iota // launch the group on a worker goroutine
+	decisionSkip                 // skip (own when: falsey, or cascade-poisoned)
+	decisionErr                  // predicate render error recorded in schedErr
+)
+
+// decide evaluates a ready node. A cascade-poisoned node short-circuits to
+// decisionSkip. A node with a when: predicate evaluates it against a stable
+// snapshot; render errors record schedErr, cancel the run, and return
+// decisionErr so the worklist unwinds quickly.
+func (s *dagScheduler) decide(name string) decision {
 	if s.skipped[name] {
-		return true
+		return decisionSkip
 	}
 	expr := s.plan.When[name]
 	if expr == "" {
-		return false
+		return decisionRun
 	}
 	run, err := s.engine.evalWhen(expr, s.baseline())
 	if err != nil {
 		s.schedErr = fmt.Errorf("flow %q: group %q: when: %w", s.plan.Flow, name, err)
 		s.cancel()
-		return true
+		return decisionErr
 	}
 	if !run {
 		s.skipReason[name] = "when"
-		return true
+		return decisionSkip
 	}
-	return false
+	return decisionRun
 }
 
 // drainReady decides each ready node: skip (cascading synchronously) or launch.
@@ -99,16 +109,16 @@ func (s *dagScheduler) drainReady() {
 		name := s.ready[len(s.ready)-1]
 		s.ready = s.ready[:len(s.ready)-1]
 
-		if s.decide(name) {
-			if s.schedErr != nil {
-				return
-			}
+		switch s.decide(name) {
+		case decisionErr:
+			return
+		case decisionSkip:
 			s.skipped[name] = true
 			s.engine.emitGroupSkipped(name, s.skipReason[name])
 			s.onDone(name, true)
-			continue
+		case decisionRun:
+			s.launch(name)
 		}
-		s.launch(name)
 	}
 }
 
@@ -182,7 +192,7 @@ func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow
 
 	s.drainReady()
 	if s.schedErr == nil {
-		e.runDAGLoop(gctx, doneCh, s)
+		s.pump(gctx, doneCh)
 	}
 
 	if err := g.Wait(); err != nil && s.schedErr == nil {
@@ -191,10 +201,11 @@ func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow
 	return s.schedErr
 }
 
-// runDAGLoop pumps completed groups from doneCh back into the scheduler until
-// every group has terminated (run or skipped), a predicate error aborts, or the
-// context is canceled.
-func (e *Engine) runDAGLoop(gctx context.Context, doneCh <-chan string, s *dagScheduler) {
+// pump pumps completed groups from doneCh back into the scheduler until every
+// group has terminated (run or skipped), a predicate error aborts, or the
+// context is canceled. Lives on dagScheduler because every operation it
+// performs is scheduler-state mutation.
+func (s *dagScheduler) pump(gctx context.Context, doneCh <-chan string) {
 	for s.remaining > 0 {
 		select {
 		case finished := <-doneCh:

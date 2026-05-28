@@ -124,4 +124,16 @@ func TestJSONEmitter_DAGSkippedReason(t *testing.T) {
 	assert.Equal(t, StatusSkipped, statusOf(evs, "report"))
 	assert.Equal(t, "when", reasonOf(evs, "deploy"))
 	assert.Contains(t, reasonOf(evs, "report"), "deploy")
+
+	// Gap #8 from self-review: a skip cascade is NOT a failure — the flow
+	// itself must still end "ok" so CI tooling doesn't mistake a conditional
+	// branch for a broken run.
+	var flowEnd Event
+	for i := range evs {
+		if evs[i].Event == EventFlowEnd {
+			flowEnd = evs[i]
+		}
+	}
+	assert.Equal(t, EventFlowEnd, flowEnd.Event, "flow.end event must be emitted")
+	assert.Equal(t, StatusOK, flowEnd.Status, "skip cascade must not turn flow.end into a failure")
 }

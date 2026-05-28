@@ -35,7 +35,9 @@ func ExtractRefs(g *Group) ([]string, error) {
 //
 //   - every {{ output.X }} must point to a group that appears earlier in the
 //     same flow (step mode: in an earlier step; dag mode: in the flow's run
-//     set, with the resulting data DAG being acyclic).
+//     set, with the resulting data DAG being acyclic — including references
+//     inside `when:` predicates, which are treated as graph edges and
+//     cycle-checked).
 //   - dag mode additionally rejects cycles.
 //
 // It is invoked from normalizeAndValidate so a single LoadConfig surfaces
@@ -59,7 +61,7 @@ func (c *Config) checkFlowRefs(flowName string, f *Flow, members []string) error
 	case ModeStep:
 		return c.checkStepRefs(flowName, f, memberSet)
 	case ModeDAG:
-		return c.checkDAGRefs(flowName, members, memberSet)
+		return c.checkDAGRefs(flowName, f, members, memberSet)
 	}
 	return nil
 }
@@ -124,13 +126,49 @@ func (c *Config) checkWhenRefs(flowName string, stepIdx int, when string, member
 	return nil
 }
 
-func (c *Config) checkDAGRefs(flowName string, members []string, memberSet map[string]struct{}) error {
+func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, memberSet map[string]struct{}) error {
 	adj := make(map[string][]string, len(members))
 	inDeg := make(map[string]int, len(members))
 	for _, m := range members {
 		inDeg[m] = 0
 	}
-	for _, m := range members {
+	// addEdge records ref -> m in the data graph. fromWhen toggles the error
+	// phrasing so a `when:` reference reads "when references {{ output.X }}"
+	// (mirroring step mode), distinguishing it from a command/param reference.
+	addEdge := func(ref, m string, fromWhen bool) error {
+		if _, ok := memberSet[ref]; !ok {
+			if fromWhen {
+				return fmt.Errorf(
+					"flow %q: group %q: when references {{ output.%s }}, but %q is not part of this flow",
+					flowName, m, ref, ref,
+				)
+			}
+			return fmt.Errorf(
+				"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
+				flowName, m, ref, ref,
+			)
+		}
+		if ref == m {
+			return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+		}
+		adj[ref] = append(adj[ref], m)
+		inDeg[m]++
+		return nil
+	}
+	// seen catches the same group listed twice in run: — both bare strings and
+	// {group, when} maps. With per-entry `when:` predicates, last-wins would
+	// silently swallow a predicate; reject it at load.
+	seen := make(map[string]struct{}, len(f.Run))
+	for i := range f.Run {
+		m := f.Run[i].Group
+		if _, dup := seen[m]; dup {
+			return fmt.Errorf(
+				"flow %q: group %q is listed more than once in run: (duplicate dag entries are not allowed)",
+				flowName, m,
+			)
+		}
+		seen[m] = struct{}{}
+
 		g := c.GroupByName(m)
 		if g == nil {
 			return fmt.Errorf("flow %q: group %q is not defined", flowName, m)
@@ -140,17 +178,21 @@ func (c *Config) checkDAGRefs(flowName string, members []string, memberSet map[s
 			return fmt.Errorf("flow %q: %w", flowName, err)
 		}
 		for _, ref := range refs {
-			if _, ok := memberSet[ref]; !ok {
-				return fmt.Errorf(
-					"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
-					flowName, m, ref, ref,
-				)
+			if err := addEdge(ref, m, false); err != nil {
+				return err
 			}
-			if ref == m {
-				return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+		}
+		// when: references create edges exactly like command/param refs.
+		if w := f.Run[i].When; w != "" {
+			whenRefs, werr := template.Refs(w)
+			if werr != nil {
+				return fmt.Errorf("flow %q: group %q: when: %w", flowName, m, werr)
 			}
-			adj[ref] = append(adj[ref], m)
-			inDeg[m]++
+			for _, ref := range whenRefs {
+				if err := addEdge(ref, m, true); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return topoCheck(flowName, members, adj, inDeg)

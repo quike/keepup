@@ -239,14 +239,76 @@ the cache is written only on success, so a failed/timed-out run can't poison
 it. In dag mode there are no steps, so the flow-level values are the only
 envelope.
 
+### Can I make a single group in a dag flow conditional?
+
+Yes. Instead of a bare group name, write a map with `group:` and `when:` keys:
+
+```yaml
+flows:
+  ci:
+    mode: dag
+    run:
+      - build
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'
+      - report
+```
+
+`when:` uses the same template engine and falsey set as step-mode `when:`
+(`""`, `"false"`, `"0"`, `"no"`, `"off"`). The map form accepts **only**
+`group` and `when` — `command`, `params`, and other group fields belong on the
+group definition in `groups:`. An unexpected key is a config error.
+
+References inside `when:` (e.g. `output "test"`) become scheduling edges:
+`test` is guaranteed to finish before the predicate runs, and the reference
+participates in the cycle check.
+
+Bare-string entries in `run:` are unchanged — the map form is purely additive.
+
+### What happens to groups that depend on a skipped dag group?
+
+They are **cascade-skipped**: a group that depends (directly or transitively)
+on a skipped group's output cannot run, because the producer's output is
+absent. Each cascade-skipped group emits a `group.end` event with
+`"status":"skipped"` and a `"reason"` explaining which upstream group was
+skipped.
+
+Example: a `release` flow where `deploy` is gated on `DEPLOY=true` and
+`notify` depends on `deploy`:
+
+```sh
+$ keepup run release --config keepup.yml --events -
+{"event":"flow.start","flow":"release","mode":"dag"}
+{"event":"group.end","group":"deploy","status":"skipped","reason":"when"}
+{"event":"group.end","group":"notify","status":"skipped","reason":"upstream \"deploy\" skipped"}
+{"event":"group.end","group":"build","status":"ok","durationMs":2}
+{"event":"flow.end","flow":"release","status":"ok","durationMs":2}
+```
+
+`"reason":"when"` marks the directly-gated group; `"reason":"upstream
+\"deploy\" skipped"` marks groups skipped because their producer was skipped.
+A cascade skip is not a failure — the flow ends with `"status":"ok"` as long
+as no group actually errored.
+
+### Does `--dry-run` evaluate `when:` predicates?
+
+Yes. `when:` predicates have no side effects, so they evaluate normally in
+`--dry-run`, and the dry run reveals the real control flow — including which
+groups would be skipped and which dependents would cascade. A `when:`-skipped
+group emits `"status":"skipped"` (skip wins over dry-run because the decision
+happens before the group would be launched); other groups emit
+`"status":"dry-run"`.
+
 ### How does `when:` differ from a group's `skip-if`?
 
-`when:` is on a **step** and decides whether the whole wave runs; `skip-if:` is
-on a **group** and decides whether that one group runs. `when:` is a template
-predicate (uses `output`/`env`/sprig, falsey = skip) evaluated against earlier
-steps' outputs; `skip-if:` is a shell command (exit 0 = skip) run just before
+`when:` is on a **step** (step mode) or a **dag run entry** (dag mode) and
+decides whether that wave or individual group runs; `skip-if:` is on a
+**group** and decides whether that one group runs. `when:` is a template
+predicate (uses `output`/`env`/sprig, falsey = skip) evaluated against
+prior outputs; `skip-if:` is a shell command (exit 0 = skip) run just before
 the group. Use `when:` for "should this phase happen at all?" and `skip-if:`
-for "is this group's work already done?". `when:` is step-mode only.
+for "is this group's work already done?".
 
 ---
 

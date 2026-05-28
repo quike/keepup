@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"sync"
 
@@ -11,43 +12,153 @@ import (
 	"github.com/quike/keepup/internal/plan"
 )
 
+// dagScheduler holds the scheduler-goroutine-local bookkeeping for a dag run.
+// Every field and method here is touched only by the single scheduler goroutine,
+// so none of it needs synchronization; workers communicate solely through
+// doneCh and the snapMu-guarded snapshot owned by runDAGPlan.
+type dagScheduler struct {
+	engine *Engine
+	plan   *plan.Plan
+
+	// unresolvedPreds counts each group's predecessors that have not yet
+	// reached a terminal state (run or skipped). A group becomes ready when
+	// its count drops to zero.
+	unresolvedPreds map[string]int
+	// skipped marks groups the scheduler has decided to skip — either because
+	// their own when: rendered falsey, or because they are downstream of a
+	// skipped group (cascade).
+	skipped map[string]bool
+	// skipReason carries the human-readable reason for each skip ("when" or
+	// `upstream "<name>" skipped`), surfaced to logs and the event stream.
+	skipReason map[string]string
+	// ready is the worklist of groups whose predecessors are all terminal and
+	// that still need a skip-or-launch decision.
+	ready []string
+
+	// remaining is the count of groups not yet at a terminal state; the run
+	// is complete when it reaches zero.
+	remaining int
+	// schedErr records a scheduler-originated failure (e.g. a when: render
+	// error). It is propagated ahead of any worker error from g.Wait().
+	schedErr error
+
+	launch func(name string)
+	cancel context.CancelFunc
+
+	baseline func() map[string]string // stable snapshot for when: evaluation
+}
+
+// onDone resolves a terminal node's successors. A skipped node poisons its
+// successors (first poisoner wins the reason); every successor's unresolved
+// predecessor count is decremented and those that reach zero join the ready
+// worklist.
+func (s *dagScheduler) onDone(name string, wasSkipped bool) {
+	s.remaining--
+	for _, succ := range s.plan.Successors[name] {
+		if wasSkipped && !s.skipped[succ] {
+			s.skipped[succ] = true
+			s.skipReason[succ] = fmt.Sprintf("upstream %q skipped", name)
+		}
+		s.unresolvedPreds[succ]--
+		if s.unresolvedPreds[succ] == 0 {
+			s.ready = append(s.ready, succ)
+		}
+	}
+}
+
+// decision is the outcome of evaluating a ready node — three-valued so the
+// caller doesn't have to disambiguate skip-vs-error via a side-effect field.
+type decision int
+
+const (
+	decisionRun  decision = iota // launch the group on a worker goroutine
+	decisionSkip                 // skip (own when: falsey, or cascade-poisoned)
+	decisionErr                  // predicate render error recorded in schedErr
+)
+
+// decide evaluates a ready node. A cascade-poisoned node short-circuits to
+// decisionSkip. A node with a when: predicate evaluates it against a stable
+// snapshot; render errors record schedErr, cancel the run, and return
+// decisionErr so the worklist unwinds quickly.
+func (s *dagScheduler) decide(name string) decision {
+	if s.skipped[name] {
+		return decisionSkip
+	}
+	expr := s.plan.When[name]
+	if expr == "" {
+		return decisionRun
+	}
+	run, err := s.engine.evalWhen(expr, s.baseline())
+	if err != nil {
+		s.schedErr = fmt.Errorf("flow %q: group %q: when: %w", s.plan.Flow, name, err)
+		s.cancel()
+		return decisionErr
+	}
+	if !run {
+		s.skipReason[name] = "when"
+		return decisionSkip
+	}
+	return decisionRun
+}
+
+// drainReady decides each ready node: skip (cascading synchronously) or launch.
+// A skip can make successors ready, which may themselves skip, so this loops
+// until the worklist is empty or a predicate error aborts the run.
+func (s *dagScheduler) drainReady() {
+	for len(s.ready) > 0 {
+		name := s.ready[len(s.ready)-1]
+		s.ready = s.ready[:len(s.ready)-1]
+
+		switch s.decide(name) {
+		case decisionErr:
+			return
+		case decisionSkip:
+			s.skipped[name] = true
+			s.engine.emitGroupSkipped(name, s.skipReason[name])
+			s.onDone(name, true)
+		case decisionRun:
+			s.launch(name)
+		}
+	}
+}
+
 // runDAGPlan runs the topological closure of the plan. A group starts as soon
-// as every group it references via {{ output.X }} has finished. The classical
-// Kahn-style ready queue is layered on top of errgroup so cancellation and
-// max-concurrency carry over without bespoke synchronization. Every group runs
-// under the flow-level envelope (dag mode has no per-step overrides).
+// as every group it references (via {{ output.X }} in command/params OR in its
+// when: predicate) has finished. A group whose when: predicate renders falsey
+// is skipped, and every group downstream of it cascades to skipped too — a
+// consumer cannot run on a producer's missing output.
+//
+// All skip decisions and bookkeeping live in this single scheduler goroutine
+// (the dagScheduler value); workers only run groups, publish outputs under
+// snapMu, and signal completion on doneCh. That keeps the conditional logic
+// free of additional synchronization.
 func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow) error {
 	env := resolveEnvelope(flow, nil)
-	// indeg tracks unresolved predecessors per group. It is mutated by the
-	// scheduler goroutine only.
-	indeg := make(map[string]int, len(p.Members))
-	for _, m := range p.Members {
-		indeg[m] = len(p.Predecessors[m])
-	}
 
-	// doneCh carries finished group names from workers back to the scheduler.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	doneCh := make(chan string, len(p.Members))
-
 	g, gctx := errgroup.WithContext(ctx)
 	if e.maxConcurrency > 0 {
 		g.SetLimit(e.maxConcurrency)
 	}
 
-	// Outputs are appended to a flow-local snapshot as groups finish. This
-	// snapshot is what we hand to each newly-ready group so reads are stable.
 	var (
 		snapMu sync.RWMutex
 		snap   = make(map[string]string, len(p.Members))
 	)
 	maps.Copy(snap, e.outputs.Snapshot())
+	baseline := func() map[string]string {
+		snapMu.RLock()
+		defer snapMu.RUnlock()
+		return cloneSnapshot(snap)
+	}
 
 	launch := func(name string) {
 		group := e.groups[name]
 		g.Go(func() error {
-			snapMu.RLock()
-			baseline := cloneSnapshot(snap)
-			snapMu.RUnlock()
-			if err := e.runGroup(gctx, &group, baseline, env); err != nil {
+			if err := e.runGroup(gctx, &group, baseline(), env); err != nil {
 				return err
 			}
 			if v, ok := e.outputs.Get(name); ok {
@@ -63,29 +174,57 @@ func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow
 		})
 	}
 
-	pending := len(p.Members)
-	for _, r := range p.Roots {
-		launch(r)
+	s := &dagScheduler{
+		engine:          e,
+		plan:            p,
+		unresolvedPreds: make(map[string]int, len(p.Members)),
+		skipped:         make(map[string]bool, len(p.Members)),
+		skipReason:      make(map[string]string, len(p.Members)),
+		ready:           append(make([]string, 0, len(p.Members)), p.Roots...),
+		remaining:       len(p.Members),
+		launch:          launch,
+		cancel:          cancel,
+		baseline:        baseline,
+	}
+	for _, m := range p.Members {
+		s.unresolvedPreds[m] = len(p.Predecessors[m])
 	}
 
-	// Scheduler loop: dispatch successors as their predecessors complete.
-loop:
-	for pending > 0 {
+	s.drainReady()
+	if s.schedErr == nil {
+		s.pump(gctx, doneCh)
+	}
+
+	if err := g.Wait(); err != nil && s.schedErr == nil {
+		return err
+	}
+	return s.schedErr
+}
+
+// pump pumps completed groups from doneCh back into the scheduler until every
+// group has terminated (run or skipped), a predicate error aborts, or the
+// context is canceled. Lives on dagScheduler because every operation it
+// performs is scheduler-state mutation.
+func (s *dagScheduler) pump(gctx context.Context, doneCh <-chan string) {
+	for s.remaining > 0 {
 		select {
 		case finished := <-doneCh:
-			pending--
-			for _, succ := range p.Successors[finished] {
-				indeg[succ]--
-				if indeg[succ] == 0 {
-					launch(succ)
-				}
+			s.onDone(finished, false)
+			s.drainReady()
+			if s.schedErr != nil {
+				return
 			}
 		case <-gctx.Done():
-			break loop
+			return
 		}
 	}
+}
 
-	return g.Wait()
+// emitGroupSkipped reports a skipped dag group: a log line carrying the reason
+// and a group.end event marking it skipped on the structured stream.
+func (e *Engine) emitGroupSkipped(name, reason string) {
+	e.log.Info("group skipped", "group", name, "reason", reason)
+	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped, Reason: reason})
 }
 
 func cloneSnapshot(m map[string]string) map[string]string {

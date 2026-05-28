@@ -155,6 +155,67 @@ shell-interpreted single line:
 Use shell mode only when you actually need shell features (`|`, `$()`,
 globs, …).
 
+## Conditional dag groups
+
+In dag mode a single `run:` entry can carry a `when:` predicate so it only
+runs when a condition is met. The group is skipped (not failed) when the
+predicate is falsey; any group that depends on its output is cascade-skipped.
+
+```yaml
+groups:
+  - name: build
+    command: go
+    params: [build, -o, bin/app, ./]
+  - name: test
+    command: go
+    params: [test, ./...]
+  - name: deploy
+    command: ./scripts/deploy.sh
+    params: ['{{ output "test" }}']
+  - name: report
+    command: ./scripts/notify.sh
+
+flows:
+  ci:
+    mode: dag
+    run:
+      - build
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'
+      - report
+```
+
+Run it and watch the event stream:
+
+```sh
+keepup run ci --config keepup.yml --events -
+```
+
+When tests pass, all groups run:
+
+```
+{"event":"flow.start","flow":"ci","mode":"dag"}
+{"event":"group.end","group":"build","status":"ok","durationMs":3}
+{"event":"group.end","group":"test","status":"ok","durationMs":4}
+{"event":"group.end","group":"deploy","status":"ok","durationMs":3}
+{"event":"group.end","group":"report","status":"ok","durationMs":3}
+{"event":"flow.end","flow":"ci","status":"ok","durationMs":11}
+```
+
+When the predicate is falsey (e.g. `DEPLOY` unset in an env-gated flow),
+`deploy` is skipped and any downstream group is cascade-skipped:
+
+```
+{"event":"flow.start","flow":"release","mode":"dag"}
+{"event":"group.end","group":"deploy","status":"skipped","reason":"when"}
+{"event":"group.end","group":"notify","status":"skipped","reason":"upstream \"deploy\" skipped"}
+{"event":"group.end","group":"build","status":"ok","durationMs":2}
+{"event":"flow.end","flow":"release","status":"ok","durationMs":2}
+```
+
+The flow still ends `"status":"ok"` — a skip is not an error.
+
 ## More
 
 - [Configuration](CONFIG.md) — every field, defaults, semantics

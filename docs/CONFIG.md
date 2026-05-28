@@ -246,7 +246,7 @@ groups:
 | Field     | Meaning                                   | On match                                                                                                |
 | --------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `require` | Precondition that must hold               | Non-zero exit → the group (and its flow) fails with a clear error.                                      |
-| `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped; its output is the last cached value if `cache:` is set, otherwise empty. |
+| `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped and stored with `Status: "skipped"` and empty `Output` (see **Structured access** below).                |
 
 Evaluation order per group: `require` → `skip-if` → `cache` → run. In
 `--dry-run`, `require` and `skip-if` shell predicates are **not** evaluated

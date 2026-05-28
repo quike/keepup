@@ -1,0 +1,23 @@
+---
+# Exercises every status a RunResult can carry through dag execution:
+#   build  -> ok (ran successfully)
+#   lint   -> skipped via when: false
+#   report -> cascade-skipped (consumes lint's output)
+version: 2
+
+default: ci
+
+groups:
+  - { name: build, command: echo, params: ["built"] }
+  - { name: lint, command: echo, params: ["lint output"] }
+  - { name: report, command: echo, params: ['{{ output "lint" }}'] }
+
+flows:
+  ci:
+    description: "Exercises ok / skipped / cascade-skipped statuses"
+    mode: dag
+    run:
+      - build
+      - group: lint
+        when: "false"
+      - report

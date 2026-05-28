@@ -879,3 +879,19 @@ func TestFlowMembersDAGFromRunEntries(t *testing.T) {
 	}
 	assert.Equal(t, []string{"build", "deploy"}, f.Members())
 }
+
+// TestLoadOutStructFixture confirms the shared structured-outputs fixture
+// loads cleanly and produces the expected dag-run shape — paired with the
+// engine-side integration test in internal/engine/out_struct_test.go.
+func TestLoadOutStructFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-out-struct.yml")
+	require.NoError(t, err)
+	f := cfg.Flows["ci"]
+	assert.Equal(t, ModeDAG, f.Mode)
+	require.Len(t, f.Run, 3)
+	assert.Equal(t, "build", f.Run[0].Group)
+	assert.Equal(t, "lint", f.Run[1].Group)
+	assert.Equal(t, "false", f.Run[1].When)
+	assert.Equal(t, "report", f.Run[2].Group)
+}

@@ -9,10 +9,11 @@ import (
 
 // Event names emitted over the run lifecycle.
 const (
-	EventFlowStart  = "flow.start"
-	EventFlowEnd    = "flow.end"
-	EventGroupStart = "group.start"
-	EventGroupEnd   = "group.end"
+	EventFlowStart    = "flow.start"
+	EventFlowEnd      = "flow.end"
+	EventGroupStart   = "group.start"
+	EventGroupEnd     = "group.end"
+	EventWatchTrigger = "watch.trigger"
 )
 
 // Group end statuses.
@@ -34,6 +35,7 @@ type Event struct {
 	DurationMS int64     `json:"durationMs,omitempty"`
 	Err        string    `json:"err,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
+	Files      []string  `json:"files,omitempty"`
 	Time       time.Time `json:"time"`
 }
 

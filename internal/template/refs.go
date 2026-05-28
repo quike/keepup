@@ -6,6 +6,8 @@ import (
 	"text/template/parse"
 
 	"github.com/Masterminds/sprig/v3"
+
+	"github.com/quike/keepup/internal/result"
 )
 
 // Refs returns the group names a template references via output("X"), in
@@ -18,6 +20,7 @@ func Refs(s string) ([]string, error) {
 	fm := sprig.TxtFuncMap()
 	// Stub the keepup functions so parsing succeeds without real data.
 	fm["output"] = func(string) string { return "" }
+	fm["out"] = func(string) result.RunResult { return result.RunResult{} }
 	fm["env"] = func(string) string { return "" }
 
 	t, err := template.New("ref").Funcs(fm).Parse(normalize(s))
@@ -68,7 +71,8 @@ func walkPipe(p *parse.PipeNode, refs *[]string) {
 
 func walkCommand(c *parse.CommandNode, refs *[]string) {
 	if len(c.Args) >= 2 {
-		if id, ok := c.Args[0].(*parse.IdentifierNode); ok && id.Ident == "output" {
+		if id, ok := c.Args[0].(*parse.IdentifierNode); ok &&
+			(id.Ident == "output" || id.Ident == "out") {
 			if s, ok := c.Args[1].(*parse.StringNode); ok {
 				*refs = append(*refs, s.Text)
 			}

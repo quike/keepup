@@ -5,16 +5,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/quike/keepup/internal/result"
 )
 
 func TestExpand(t *testing.T) {
 	t.Parallel()
 	data := Data{
-		Outputs: map[string]string{
-			"build":      "bin/keepup",
-			"global-env": "GLOBAL",
-			"sha":        "abcdef1234567890",
-			"padded":     "  v\n",
+		Outputs: map[string]result.RunResult{
+			"build":      {Output: "bin/keepup"},
+			"global-env": {Output: "GLOBAL"},
+			"sha":        {Output: "abcdef1234567890"},
+			"padded":     {Output: "  v\n"},
 		},
 		Env: map[string]string{"HOME": "/home/quike", "LANG": "en_US"},
 	}
@@ -63,13 +65,13 @@ func TestExpand(t *testing.T) {
 func TestExpand_Sprig(t *testing.T) {
 	t.Parallel()
 	data := Data{
-		Outputs: map[string]string{
-			"name":   "Keep Up",
-			"sha":    "abcdef1234567890",
-			"csv":    "a,b,c",
-			"padded": "  spaced  ",
-			"empty":  "",
-			"num":    "21",
+		Outputs: map[string]result.RunResult{
+			"name":   {Output: "Keep Up"},
+			"sha":    {Output: "abcdef1234567890"},
+			"csv":    {Output: "a,b,c"},
+			"padded": {Output: "  spaced  "},
+			"empty":  {Output: ""},
+			"num":    {Output: "21"},
 		},
 		Env: map[string]string{"HOME": "/home/q"},
 	}
@@ -168,4 +170,75 @@ func TestNormalize(t *testing.T) {
 	for in, want := range tests {
 		assert.Equal(t, want, normalize(in), "input=%q", in)
 	}
+}
+
+// TestOutputBackCompat pins the contract that `output "x"` still returns
+// strings.TrimSpace(Outputs[x].Output) and works in sprig pipes — every
+// existing template must keep rendering identically.
+func TestOutputBackCompat(t *testing.T) {
+	t.Parallel()
+	exp := NewExpander()
+	data := Data{
+		Outputs: map[string]result.RunResult{
+			"x": {Output: "  hello world  \n", Stdout: "hello world\n", Status: "ok"},
+		},
+	}
+
+	got, err := exp.Expand(`{{ output "x" }}`, data)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", got)
+
+	// Sprig string pipe still works because output returns a string.
+	got, err = exp.Expand(`{{ output "x" | upper }}`, data)
+	require.NoError(t, err)
+	assert.Equal(t, "HELLO WORLD", got)
+}
+
+// TestOutNewFunction asserts that `out "x"` returns the full RunResult and
+// every field is reachable via dot access.
+func TestOutNewFunction(t *testing.T) {
+	t.Parallel()
+	exp := NewExpander()
+	data := Data{
+		Outputs: map[string]result.RunResult{
+			"test": {
+				Stdout:     "pass",
+				Stderr:     "warning\n",
+				Output:     "passwarning\n",
+				ExitCode:   0,
+				DurationMs: 73,
+				Status:     "ok",
+			},
+		},
+	}
+	cases := []struct {
+		expr string
+		want string
+	}{
+		{`{{ (out "test").Stdout }}`, "pass"},
+		{`{{ (out "test").Stderr }}`, "warning\n"},
+		{`{{ (out "test").Output }}`, "passwarning\n"},
+		{`{{ (out "test").ExitCode }}`, "0"},
+		{`{{ (out "test").DurationMs }}`, "73"},
+		{`{{ (out "test").Status }}`, "ok"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.expr, func(t *testing.T) {
+			t.Parallel()
+			got, err := exp.Expand(tc.expr, data)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestOutForMissingGroup confirms the zero RunResult is returned for a name
+// the engine never stored — Status is the empty string in that case.
+func TestOutForMissingGroup(t *testing.T) {
+	t.Parallel()
+	exp := NewExpander()
+	data := Data{Outputs: map[string]result.RunResult{}}
+	got, err := exp.Expand(`{{ (out "nope").Status }}`, data)
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "missing group should yield zero RunResult, empty Status")
 }

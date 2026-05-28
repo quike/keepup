@@ -895,3 +895,30 @@ func TestLoadOutStructFixture(t *testing.T) {
 	assert.Equal(t, "false", f.Run[1].When)
 	assert.Equal(t, "report", f.Run[2].Group)
 }
+
+// TestLoadOutStructFieldsFixture confirms the per-field structured-outputs
+// fixture loads cleanly — exercising the refs walker on every (out "x").<Field>
+// form in a `when:` predicate.
+func TestLoadOutStructFieldsFixture(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadConfig("./test-resources/config-out-struct-fields.yml")
+	require.NoError(t, err)
+	f := cfg.Flows["all"]
+	require.Equal(t, ModeDAG, f.Mode)
+	require.Len(t, f.Run, 7)
+	// Each consumer references a different RunResult field; assert each
+	// when: was parsed onto the right entry.
+	wantWhen := map[string]string{
+		"consume-stdout":   `{{ ne (out "producer").Stdout "" }}`,
+		"consume-stderr":   `{{ eq (out "producer").Stderr "" }}`,
+		"consume-output":   `{{ contains "PROD" (out "producer").Output }}`,
+		"consume-exit":     `{{ eq (out "producer").ExitCode 0 }}`,
+		"consume-duration": `{{ ge (out "producer").DurationMs 0 }}`,
+		"consume-status":   `{{ eq (out "producer").Status "ok" }}`,
+	}
+	for _, entry := range f.Run {
+		if want, ok := wantWhen[entry.Group]; ok {
+			assert.Equal(t, want, entry.When, "when: for %s", entry.Group)
+		}
+	}
+}

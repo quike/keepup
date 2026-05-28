@@ -1,0 +1,37 @@
+---
+# Exercises every RunResult field through a `when:` predicate so a regression
+# at any layer (engine → outputstore → template → refs) shows up as a missed
+# consumer run. The producer is a normal `ok` run; each consumer reads one
+# field of `(out "producer")` and renders truthy against the producer's actual
+# RunResult, so all six consumers should execute.
+version: 2
+
+default: all
+
+groups:
+  - { name: producer, command: echo, params: ["PRODUCED"] }
+  - { name: consume-stdout, command: echo, params: ["seen-stdout"] }
+  - { name: consume-stderr, command: echo, params: ["seen-stderr"] }
+  - { name: consume-output, command: echo, params: ["seen-output"] }
+  - { name: consume-exit, command: echo, params: ["seen-exit"] }
+  - { name: consume-duration, command: echo, params: ["seen-duration"] }
+  - { name: consume-status, command: echo, params: ["seen-status"] }
+
+flows:
+  all:
+    description: "One consumer per RunResult field, gated on (out \"producer\").<Field>"
+    mode: dag
+    run:
+      - producer
+      - group: consume-stdout
+        when: '{{ ne (out "producer").Stdout "" }}'
+      - group: consume-stderr
+        when: '{{ eq (out "producer").Stderr "" }}'
+      - group: consume-output
+        when: '{{ contains "PROD" (out "producer").Output }}'
+      - group: consume-exit
+        when: '{{ eq (out "producer").ExitCode 0 }}'
+      - group: consume-duration
+        when: '{{ ge (out "producer").DurationMs 0 }}'
+      - group: consume-status
+        when: '{{ eq (out "producer").Status "ok" }}'

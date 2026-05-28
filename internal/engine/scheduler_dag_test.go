@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -60,6 +61,39 @@ func TestDAG_When_RunsWhenTrue(t *testing.T) {
 	for _, name := range []string{"build", "test", "deploy", "report"} {
 		assert.True(t, ran[name], "%s should run when test passes", name)
 	}
+}
+
+// TestDAG_When_DryRunStillEvaluatesPredicate covers gap #9 from the
+// self-review: in --dry-run, `when:` predicates still evaluate so the dry run
+// reveals the real control flow. A when:-skipped group emits status=skipped
+// (not dry-run) because the skip decision happens before runGroup is reached;
+// a normally-run group is the one that emits dry-run.
+func TestDAG_When_DryRunStillEvaluatesPredicate(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{
+		Version: config.SchemaVersion,
+		Groups: []config.Group{
+			{Name: "build", Command: "echo"},
+			{Name: "deploy", Command: "echo"},
+		},
+		Flows: map[string]config.Flow{
+			"ci": {Mode: config.ModeDAG, Run: []config.RunEntry{
+				{Group: "build"},
+				{Group: "deploy", When: "false"},
+			}},
+		},
+	}
+	var buf bytes.Buffer
+	e := New(cfg, WithRunner(&fakeRunner{}), WithDryRun(true), WithEmitter(NewJSONEmitter(&buf)))
+	require.NoError(t, e.RunFlow(context.Background(), "ci"))
+
+	evs := decodeEvents(t, buf.Bytes())
+	// build is unconditional → dry-run swallows the actual command but still
+	// emits a group.end event with status=dry-run.
+	assert.Equal(t, StatusDryRun, statusOf(evs, "build"))
+	// deploy's when: rendered falsey → skip beats dry-run.
+	assert.Equal(t, StatusSkipped, statusOf(evs, "deploy"))
+	assert.Equal(t, "when", reasonOf(evs, "deploy"))
 }
 
 // TestDAG_When_RenderErrorAbortsFlow covers gap #7 from the self-review: a

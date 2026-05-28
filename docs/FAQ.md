@@ -291,6 +291,15 @@ $ keepup run release --config keepup.yml --events -
 A cascade skip is not a failure — the flow ends with `"status":"ok"` as long
 as no group actually errored.
 
+### Does `--dry-run` evaluate `when:` predicates?
+
+Yes. `when:` predicates have no side effects, so they evaluate normally in
+`--dry-run`, and the dry run reveals the real control flow — including which
+groups would be skipped and which dependents would cascade. A `when:`-skipped
+group emits `"status":"skipped"` (skip wins over dry-run because the decision
+happens before the group would be launched); other groups emit
+`"status":"dry-run"`.
+
 ### How does `when:` differ from a group's `skip-if`?
 
 `when:` is on a **step** (step mode) or a **dag run entry** (dag mode) and

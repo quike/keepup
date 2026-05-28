@@ -10,9 +10,12 @@ import (
 	"github.com/quike/keepup/internal/result"
 )
 
-// Refs returns the group names a template references via output("X"), in
-// encounter order (duplicates preserved; callers de-duplicate as needed).
-// Both the legacy "{{ output.X }}" form and the function form are handled.
+// Refs returns the group names a template references via output("X") or out("X"),
+// in encounter order (duplicates preserved; callers de-duplicate as needed).
+// The following forms are all handled:
+//   - legacy dot form:    {{ output.X }}
+//   - function form:      {{ output "X" }} / {{ out "X" }}
+//   - dot-access form:    {{ (out "X").ExitCode }} / {{ (out "X").Status }}
 //
 // Only string-literal arguments are extractable; a dynamically-computed name
 // (e.g. output (printf "g%d" 1)) cannot be resolved statically and is ignored.
@@ -78,10 +81,17 @@ func walkCommand(c *parse.CommandNode, refs *[]string) {
 			}
 		}
 	}
-	// Recurse into parenthesized sub-pipelines, e.g. {{ if (output "x") }}.
+	// Recurse into parenthesized sub-pipelines and chain expressions,
+	// e.g. {{ if (output "x") }} or {{ (out "x").ExitCode }}.
 	for _, a := range c.Args {
-		if pipe, ok := a.(*parse.PipeNode); ok {
-			walkPipe(pipe, refs)
+		switch n := a.(type) {
+		case *parse.PipeNode:
+			walkPipe(n, refs)
+		case *parse.ChainNode:
+			// (out "x").Field — the chain base is itself a pipeline; walk into it.
+			if pipe, ok := n.Node.(*parse.PipeNode); ok {
+				walkPipe(pipe, refs)
+			}
 		}
 	}
 }

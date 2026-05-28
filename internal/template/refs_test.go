@@ -29,6 +29,11 @@ func TestRefs(t *testing.T) {
 		{"env not counted as ref", `{{ env "HOME" }}`, nil},
 		{"mixed legacy and func", `{{ output.a }} {{ output "b" }}`, []string{"a", "b"}},
 		{"dynamic name not extractable", `{{ output (printf "g%d" 1) }}`, nil},
+		{"out func form", `{{ out "a" }}`, []string{"a"}},
+		{"out dot-access ExitCode", `{{ (out "a").ExitCode }}`, []string{"a"}},
+		{"out dot-access Status in if", `{{ if (out "a").Status }}x{{ end }}`, []string{"a"}},
+		{"out with sprig pipe", `{{ out "a" | printf "%v" }}`, []string{"a"}},
+		{"output dot-access from output also works", `{{ (output "a") }}`, []string{"a"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

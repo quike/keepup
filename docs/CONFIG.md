@@ -249,8 +249,9 @@ groups:
 | `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped; its output is the last cached value if `cache:` is set, otherwise empty. |
 
 Evaluation order per group: `require` → `skip-if` → `cache` → run. In
-`--dry-run`, predicates are **not** evaluated — keepup only logs what it would
-do.
+`--dry-run`, `require` and `skip-if` shell predicates are **not** evaluated
+(no shells are spawned). `when:` template predicates are still evaluated so
+dry-run reveals real control flow.
 
 ### Caching
 

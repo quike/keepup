@@ -392,8 +392,11 @@ string. Downstream references always resolve to _something_, never an error.
 
 ### Do predicates and caching run during `--dry-run`?
 
-No. Dry-run logs what _would_ happen and evaluates neither predicates nor the
-cache, so it never touches disk or spawns shells.
+It depends on the predicate type. `when:` template predicates **do** evaluate
+— they have no side effects and dry-run uses the results to reveal real control
+flow (which groups would skip, which would cascade). `require` and `skip-if`
+shell predicates do **not** run — no shells are spawned and the cache is not
+consulted, so dry-run never touches disk.
 
 ---
 

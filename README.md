@@ -24,6 +24,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **Groups + flows**       | Reusable command units composed into many named pipelines in one file — no duplication.                                     |
 | **Two scheduling modes** | `step` (explicit parallel waves with barriers) or `dag` (topological, inferred from `{{ output.X }}` data deps).            |
 | **Output piping**        | Pass one group's captured stdout into another via `{{ output "name" }}`, validated at load time.                            |
+| **Structured outputs**   | `{{ out "name" }}` returns a structured value (stdout, stderr, exit code, duration, status) for richer `when:` predicates. `output "name"` is unchanged. | dag + step |
 | **Templating**           | `command`/`params` are Go templates with [sprig](https://masterminds.github.io/sprig/): `{{ output "sha" \| trunc 7 }}`, `{{ env "CI" \| default "local" }}`. Legacy `{{ output.X }}` still works. |
 | **Caching**              | Per-group `cache: { reads, writes }` fingerprints inputs (hash or mtime) and skips unchanged work, replaying stored output. |
 | **Watch mode**           | `keepup watch` re-runs a flow on file changes (using each group's `cache.reads`); caching makes unaffected groups no-ops.   |

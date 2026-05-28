@@ -188,6 +188,39 @@ It still trims. `output` returns the referenced group's stdout with
 surrounding whitespace removed, exactly like the original expander — so a
 producer printing `banana\n` substitutes as `banana`.
 
+### When do I use `output` vs `out`?
+
+`output "x"` returns the trimmed merged stdout+stderr as a string — use it
+when you want to pipe through sprig string functions or embed in a
+command/param. `out "x"` returns a structured value: use it when you want to
+read a specific field (`.ExitCode`, `.DurationMs`, `.Stderr`, `.Status`). Both
+are fully supported; `output` is unchanged from earlier versions.
+
+### Why does `(out "x").ExitCode` have a capital `E`?
+
+`out` returns a Go struct, and Go templates access struct fields case-sensitively
+using the Go field name. Use `.Stdout`, `.Stderr`, `.Output`, `.ExitCode`,
+`.DurationMs`, `.Status` (all capital first letter).
+
+### Will my existing templates break?
+
+No. `output "x"` keeps its exact contract — same trimmed string, same sprig
+pipe support. Two changes worth flagging:
+
+- The cache fingerprint format bumped once, so the first run after upgrade
+  rebuilds every cached step. Steady-state cache hits return on the next run.
+- A `skip-if:`-skipped group used to expose its prior cached output through
+  `{{ output "x" }}`; it now exposes empty string. Templates that read a
+  skipped producer's output now see `""`. Use `(out "x").Status == "skipped"`
+  to branch on skip explicitly.
+
+### Does `--dry-run` interact with structured outputs?
+
+Yes — in dry-run, every group that would run is instead stored with
+`Status: "dry-run"` (no actual command executes, but `when:` predicates still
+evaluate against env/outputs to surface the real control flow). A dry-run
+group's `Output` is empty.
+
 ---
 
 ## Execution
@@ -359,8 +392,11 @@ string. Downstream references always resolve to _something_, never an error.
 
 ### Do predicates and caching run during `--dry-run`?
 
-No. Dry-run logs what _would_ happen and evaluates neither predicates nor the
-cache, so it never touches disk or spawns shells.
+It depends on the predicate type. `when:` template predicates **do** evaluate
+— they have no side effects and dry-run uses the results to reveal real control
+flow (which groups would skip, which would cascade). `require` and `skip-if`
+shell predicates do **not** run — no shells are spawned and the cache is not
+consulted, so dry-run never touches disk.
 
 ---
 

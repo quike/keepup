@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/result"
 )
 
 // These tests exercise the real template.Expander through the engine, covering
@@ -105,7 +106,7 @@ type recordingRunner struct {
 	commands map[string]string
 }
 
-func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (string, error) {
+func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.params == nil {
@@ -114,7 +115,8 @@ func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []strin
 	}
 	r.params[g.Name] = strings.Join(params, ",")
 	r.commands[g.Name] = g.Command
-	return r.outputs[g.Name], nil
+	stdout := r.outputs[g.Name]
+	return result.RunResult{Stdout: stdout, Output: stdout, Status: "ok"}, nil
 }
 
 func TestEngine_Template_BadCommandFailsGroup(t *testing.T) {
@@ -132,10 +134,10 @@ func TestEngine_Template_BadCommandFailsGroup(t *testing.T) {
 // and echoes its first param as output so downstream refs resolve.
 type captureCommandRunner struct{ lastCommand string }
 
-func (r *captureCommandRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (string, error) {
+func (r *captureCommandRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
 	r.lastCommand = g.Command
 	if len(params) > 0 {
-		return params[0], nil
+		return result.RunResult{Stdout: params[0], Output: params[0], Status: "ok"}, nil
 	}
-	return "", nil
+	return result.RunResult{Status: "ok"}, nil
 }

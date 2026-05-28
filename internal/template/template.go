@@ -22,6 +22,8 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
+
+	"github.com/quike/keepup/internal/result"
 )
 
 // legacyRe matches the original "{{ output.NAME }}" form (optional whitespace
@@ -38,8 +40,8 @@ func normalize(s string) string {
 
 // Data is the context a template is rendered against.
 type Data struct {
-	Outputs map[string]string // group name → captured stdout
-	Env     map[string]string // merged keepup environment
+	Outputs map[string]result.RunResult // group name → structured run result
+	Env     map[string]string           // merged keepup environment
 }
 
 // Expander renders a templated string against Data. Implementations must be
@@ -76,7 +78,14 @@ func funcMap(data Data) template.FuncMap {
 	fm := sprig.TxtFuncMap()
 	// output trims surrounding whitespace, matching the original substring
 	// expander so existing configs render identically.
-	fm["output"] = func(name string) string { return strings.TrimSpace(data.Outputs[name]) }
+	fm["output"] = func(name string) string {
+		return strings.TrimSpace(data.Outputs[name].Output)
+	}
+	// out returns the full RunResult so templates can read individual fields,
+	// e.g. (out "x").ExitCode or (out "x").Status.
+	fm["out"] = func(name string) result.RunResult {
+		return data.Outputs[name]
+	}
 	fm["env"] = func(key string) string { return data.Env[key] }
 	return fm
 }

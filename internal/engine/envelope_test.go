@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/result"
 )
 
 // flakyRunner fails the first failUntil-1 attempts, then succeeds.
@@ -20,22 +21,22 @@ type flakyRunner struct {
 	output    string
 }
 
-func (r *flakyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (string, error) {
+func (r *flakyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
 	n := atomic.AddInt32(&r.calls, 1)
 	if n <= r.failUntil {
-		return "", errors.New("transient failure")
+		return result.RunResult{ExitCode: 1}, errors.New("transient failure")
 	}
-	return r.output, nil
+	return result.RunResult{Stdout: r.output, Output: r.output, Status: "ok"}, nil
 }
 
 // blockingRunner blocks until ctx is done, then returns ctx.Err() — used to
 // exercise timeouts.
 type blockingRunner struct{ calls int32 }
 
-func (r *blockingRunner) Run(ctx context.Context, _ *config.Group, _ []string, _ map[string]string) (string, error) {
+func (r *blockingRunner) Run(ctx context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
 	atomic.AddInt32(&r.calls, 1)
 	<-ctx.Done()
-	return "", ctx.Err()
+	return result.RunResult{}, ctx.Err()
 }
 
 func TestResolveEnvelope(t *testing.T) {
@@ -77,7 +78,7 @@ func TestEngine_Retries_SucceedAfterFailures(t *testing.T) {
 	require.NoError(t, e.RunFlow(context.Background(), "f"))
 	assert.Equal(t, int32(3), atomic.LoadInt32(&r.calls), "should retry until the 3rd attempt succeeds")
 	v, _ := e.Outputs().Get("a")
-	assert.Equal(t, "ok", v)
+	assert.Equal(t, "ok", v.Output)
 }
 
 func TestEngine_Retries_ExhaustedFails(t *testing.T) {

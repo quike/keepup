@@ -108,3 +108,40 @@ func TestEngine_When_BadTemplateErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "when")
 }
+
+// TestStep_SkippedStepStoresEachGroupAsSkipped covers the step-mode analog:
+// a when:-skipped step now stores RunResult{Status:"skipped"} for each of its
+// groups, so (out "x").Status reads "skipped" instead of "" (which would mean
+// "never declared").
+func TestStep_SkippedStepStoresEachGroupAsSkipped(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{
+		Version: config.SchemaVersion,
+		Groups: []config.Group{
+			{Name: "a", Command: "echo"},
+			{Name: "b", Command: "echo"},
+		},
+		Flows: map[string]config.Flow{
+			"f": {Mode: config.ModeStep, Steps: []config.Step{
+				{Run: []string{"a"}, When: "false"}, // step skipped
+				{Run: []string{"b"}},                // runs normally
+			}},
+		},
+	}
+	r := &fakeRunner{outputs: map[string]string{"b": "ran"}}
+	e := New(cfg, WithRunner(r))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+
+	store := e.Outputs()
+
+	aRR, ok := store.Get("a")
+	require.True(t, ok, "step-skipped group must be stored")
+	assert.Equal(t, "skipped", aRR.Status)
+
+	// 'a' was skipped; 'b' should be the only call.
+	assert.Equal(t, []string{"b:"}, r.calls)
+
+	bRR, ok := store.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, "ok", bRR.Status)
+}

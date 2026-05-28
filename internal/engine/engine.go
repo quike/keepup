@@ -13,6 +13,7 @@ import (
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/logger"
 	"github.com/quike/keepup/internal/plan"
+	"github.com/quike/keepup/internal/result"
 	"github.com/quike/keepup/internal/template"
 )
 
@@ -177,7 +178,7 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 // Skipped or cache-hit groups still publish an output value so downstream
 // {{ output.X }} references resolve. The command run (only) is wrapped with the
 // envelope's per-attempt timeout and bounded retries.
-func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]string, env envelope) (err error) {
+func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map[string]result.RunResult, env envelope) (err error) {
 	start := time.Now()
 	e.emitter.Emit(Event{Event: EventGroupStart, Group: group.Name})
 	status := StatusOK
@@ -214,6 +215,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	if e.dryRun {
 		e.log.Info("[dry-run] would run",
 			"group", g.Name, "command", g.Command, "params", expanded, "shell", g.UseShell())
+		e.outputs.Set(g.Name, result.RunResult{Status: result.StatusDryRun})
 		status = StatusDryRun
 		return nil
 	}
@@ -226,8 +228,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 
 	if g.SkipIf != "" {
 		if err = e.prober.Probe(ctx, g.SkipIf, e.cfg.Env); err == nil {
-			out := e.cachedOutput(&g)
-			e.outputs.Set(g.Name, out)
+			e.outputs.Set(g.Name, result.RunResult{Status: result.StatusSkipped})
 			e.log.Info("group skipped", "group", g.Name, "reason", "skip-if", "predicate", g.SkipIf)
 			status = StatusSkipped
 			return nil
@@ -235,7 +236,9 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	}
 
 	if fp, hit := e.cacheLookup(&g, expanded); hit {
-		e.outputs.Set(g.Name, fp.Output)
+		cached := fp.Result
+		cached.Status = result.StatusCached
+		e.outputs.Set(g.Name, cached)
 		e.log.Info("cache hit", "group", g.Name, "fingerprint", fp.Fingerprint)
 		status = StatusCacheHit
 		return nil
@@ -244,22 +247,24 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	e.log.Info("running group", "group", g.Name, "command", g.Command, "params", expanded)
 	out, err := e.execWithEnvelope(ctx, &g, expanded, env)
 	if err != nil {
-		e.log.Error("group failed", "group", g.Name, "err", err.Error(), "output", out)
+		e.log.Error("group failed", "group", g.Name, "err", err.Error(), "output", out.Output)
 		return err
 	}
-	e.log.Trace("group output", "group", g.Name, "output", out)
+	e.log.Trace("group output", "group", g.Name, "output", out.Output)
+	// Runner sets Status to result.StatusOK on success; trust it so a future
+	// soft-fail Runner can return Status:"failed" without engine clobbering.
 	e.outputs.Set(g.Name, out)
-	e.cacheStore(&g, expanded, out)
+	e.cacheStore(&g, expanded, &out)
 	return nil
 }
 
 // execWithEnvelope runs the group's command, applying a per-attempt timeout and
 // retrying up to env.retries additional times on failure. Backoff between
 // attempts respects ctx cancellation.
-func (e *Engine) execWithEnvelope(ctx context.Context, group *config.Group, params []string, env envelope) (string, error) {
+func (e *Engine) execWithEnvelope(ctx context.Context, group *config.Group, params []string, env envelope) (result.RunResult, error) {
 	attempts := 1 + env.retries
 	var (
-		out string
+		out result.RunResult
 		err error
 	)
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -308,7 +313,7 @@ func (e *Engine) cacheLookup(group *config.Group, params []string) (*cache.Entry
 }
 
 // cacheStore persists a fresh cache entry after a successful run.
-func (e *Engine) cacheStore(group *config.Group, params []string, out string) {
+func (e *Engine) cacheStore(group *config.Group, params []string, out *result.RunResult) {
 	if e.noCache || group.Cache == nil {
 		return
 	}
@@ -319,7 +324,7 @@ func (e *Engine) cacheStore(group *config.Group, params []string, out string) {
 	}
 	entry := &cache.Entry{
 		Fingerprint: fp,
-		Output:      out,
+		Result:      *out,
 		Command:     group.Command,
 		Params:      params,
 		UpdatedAt:   time.Now(),
@@ -327,16 +332,4 @@ func (e *Engine) cacheStore(group *config.Group, params []string, out string) {
 	if err := e.cache.Save(group.Name, entry); err != nil {
 		e.log.Warn("cache save failed", "group", group.Name, "err", err.Error())
 	}
-}
-
-// cachedOutput returns the last cached output for a group when available, so a
-// skipped group can still satisfy downstream references. Returns "" otherwise.
-func (e *Engine) cachedOutput(group *config.Group) string {
-	if e.noCache || group.Cache == nil {
-		return ""
-	}
-	if entry, ok := e.cache.Load(group.Name); ok {
-		return entry.Output
-	}
-	return ""
 }

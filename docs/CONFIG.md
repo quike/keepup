@@ -191,6 +191,43 @@ Notes:
   computed name (e.g. `output (printf "g%d" 1)`) cannot be tracked and won't
   register as a dependency.
 
+### Structured access: `out "x"`
+
+`out "x"` returns a structured value for group `x`, exposing every fact the
+engine knows about that group's run. The traditional `output "x"` is unchanged
+— it still returns the group's trimmed merged stdout+stderr.
+
+Fields (Go-style capital case):
+
+| Field       | Type   | Notes                                                                             |
+| ----------- | ------ | --------------------------------------------------------------------------------- |
+| `Stdout`    | string | stdout only                                                                       |
+| `Stderr`    | string | stderr only                                                                       |
+| `Output`    | string | chronologically merged stdout+stderr; `output "x"` returns its trimmed form       |
+| `ExitCode`  | int    | 0 for ok; non-zero values appear only once soft-fail ships                        |
+| `DurationMs`| int64  | wall-clock milliseconds; 0 for skipped and cache-hit groups                       |
+| `Status`    | string | one of `"ok"`, `"skipped"`, `"cached"`, `"dry-run"`                               |
+
+Examples:
+
+```yaml
+when: '{{ eq (out "test").Status "ok" }}'
+when: '{{ gt (out "probe").DurationMs 500 }}'
+when: '{{ contains "WARNING" (out "lint").Stderr }}'
+```
+
+Existing templates using `output "x"` work byte-for-byte identically; only
+opt into `out` where you want structured access.
+
+**Upgrading from earlier versions:** the cache fingerprint format bumped
+once, so the first run after upgrade rebuilds every cached step. Steady-state
+cache hits return on the next run.
+
+**Skip semantics:** `when:`-skipped groups, cascade-skipped dependents, and
+`skip-if:`-skipped groups are all stored with `Status: "skipped"` and empty
+`Output`. (Previously skip-if'd groups exposed a stale cached `Output` —
+that's no longer the case.)
+
 ### Gating: `skip-if` and `require`
 
 Two optional predicates let a group decide whether it should run. Both are
@@ -209,11 +246,12 @@ groups:
 | Field     | Meaning                                   | On match                                                                                                |
 | --------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `require` | Precondition that must hold               | Non-zero exit → the group (and its flow) fails with a clear error.                                      |
-| `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped; its output is the last cached value if `cache:` is set, otherwise empty. |
+| `skip-if` | Condition under which work is unnecessary | Exit 0 → the group is skipped and stored with `Status: "skipped"` and empty `Output` (see **Structured access** below).                |
 
 Evaluation order per group: `require` → `skip-if` → `cache` → run. In
-`--dry-run`, predicates are **not** evaluated — keepup only logs what it would
-do.
+`--dry-run`, `require` and `skip-if` shell predicates are **not** evaluated
+(no shells are spawned). `when:` template predicates are still evaluated so
+dry-run reveals real control flow.
 
 ### Caching
 

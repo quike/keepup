@@ -216,6 +216,42 @@ When the predicate is falsey (e.g. `DEPLOY` unset in an env-gated flow),
 
 The flow still ends `"status":"ok"` — a skip is not an error.
 
+## Gating on a previous group's exit status, duration, or skip
+
+Structured outputs (`out "x"`) let you branch on any fact the engine knows
+about a prior group:
+
+```yaml
+groups:
+  - { name: probe, command: ./probe.sh }
+  - { name: thorough-check, command: ./thorough.sh }
+
+flows:
+  diagnostic:
+    mode: dag
+    run:
+      - probe
+      - group: thorough-check
+        when: '{{ gt (out "probe").DurationMs 500 }}'
+```
+
+`thorough-check` runs only when the probe took longer than half a second —
+useful for adaptive flows that fall back to expensive checks only when a
+cheap probe is inconclusive.
+
+To branch on whether a sibling was skipped (rather than ran):
+
+```yaml
+when: '{{ eq (out "deploy").Status "skipped" }}'
+```
+
+When `out "x"` references a group not listed in the flow's `run:`, config
+validation rejects it at load (identical rule to `output "x"`).
+
+`output "x"` is unchanged — it still returns the trimmed merged stdout+stderr
+and works in all sprig pipes. Use `out "x"` only when you need a specific
+field like `.Status`, `.DurationMs`, or `.Stderr`.
+
 ## More
 
 - [Configuration](CONFIG.md) — every field, defaults, semantics

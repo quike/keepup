@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/result"
 	"github.com/quike/keepup/internal/template"
 )
 
@@ -24,21 +25,28 @@ type fakeRunner struct {
 	delays  map[string]time.Duration
 }
 
-func (f *fakeRunner) Run(ctx context.Context, g *config.Group, params []string, _ map[string]string) (string, error) {
+func (f *fakeRunner) Run(ctx context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
 	if d := f.delays[g.Name]; d > 0 {
 		select {
 		case <-time.After(d):
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return result.RunResult{}, ctx.Err()
 		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, g.Name+":"+strings.Join(params, ","))
-	if err, ok := f.errs[g.Name]; ok {
-		return f.outputs[g.Name], err
+	stdout := f.outputs[g.Name]
+	rr := result.RunResult{
+		Stdout: stdout,
+		Output: stdout,
+		Status: "ok",
 	}
-	return f.outputs[g.Name], nil
+	if err, ok := f.errs[g.Name]; ok {
+		rr.ExitCode = 1
+		return rr, err
+	}
+	return rr, nil
 }
 
 // stepFlowCfg builds a config with a single step-mode flow over the given groups.
@@ -79,7 +87,7 @@ func TestEngine_StepFlow_TwoGroupsInOneStep(t *testing.T) {
 
 	require.NoError(t, e.RunFlow(context.Background(), "f"))
 	got, _ := e.Outputs().Get("a")
-	assert.Equal(t, "A\n", got)
+	assert.Equal(t, "A\n", got.Output)
 }
 
 func TestEngine_StepFlow_RunnerErrorPropagatesWrapped(t *testing.T) {
@@ -189,10 +197,10 @@ type concurrencyRunner struct {
 	after  func()
 }
 
-func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (string, error) {
+func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
 	c.before()
 	defer c.after()
-	return "", nil
+	return result.RunResult{Status: "ok"}, nil
 }
 
 func TestEngine_DAGFlow_ProducerThenConsumer(t *testing.T) {
@@ -233,7 +241,7 @@ func TestEngine_Options(t *testing.T) {
 
 	t.Run("WithOutputStore is honored", func(t *testing.T) {
 		custom := NewMemoryOutputStore()
-		custom.Set("seed", "preloaded")
+		custom.Set("seed", result.RunResult{Output: "preloaded", Status: "ok"})
 		e := New(cfg, WithOutputStore(custom), WithRunner(&fakeRunner{}))
 		assert.Same(t, custom, e.Outputs())
 	})
@@ -284,11 +292,11 @@ func (c *captureLogger) Trace(s string, _ ...any) { c.add("T:" + s) }
 func TestOutputStore_Snapshot(t *testing.T) {
 	t.Parallel()
 	s := NewMemoryOutputStore()
-	s.Set("a", "1")
-	s.Set("b", "2")
+	s.Set("a", result.RunResult{Output: "1", Status: "ok"})
+	s.Set("b", result.RunResult{Output: "2", Status: "ok"})
 	snap := s.Snapshot()
-	assert.Equal(t, "1", snap["a"])
-	snap["a"] = "mutated"
+	assert.Equal(t, "1", snap["a"].Output)
+	snap["a"] = result.RunResult{Output: "mutated"}
 	v, _ := s.Get("a")
-	assert.Equal(t, "1", v)
+	assert.Equal(t, "1", v.Output)
 }

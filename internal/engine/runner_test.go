@@ -64,7 +64,8 @@ func TestShellRunner_DirectExecNoShell(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, out)
+			assert.Equal(t, tc.want, out.Output)
+			assert.Equal(t, tc.want, out.Stdout)
 		})
 	}
 }
@@ -78,7 +79,7 @@ func TestShellRunner_ShellModeOptIn(t *testing.T) {
 	out, err := r.Run(context.Background(),
 		&config.Group{Name: "g", Command: "echo $((1+2))", Shell: "/bin/sh"}, nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "3\n", strings.TrimLeft(out, " "))
+	assert.Equal(t, "3\n", strings.TrimLeft(out.Output, " "))
 }
 
 func TestShellRunner_ShellModeWithParams(t *testing.T) {
@@ -92,7 +93,7 @@ func TestShellRunner_ShellModeWithParams(t *testing.T) {
 		&config.Group{Name: "g", Command: "echo", Shell: "/bin/sh"},
 		[]string{"hello", "world"}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "hello world\n", out)
+	assert.Equal(t, "hello world\n", out.Output)
 }
 
 func TestShellRunner_NilWritersFallbackToProcessStdio(t *testing.T) {
@@ -105,7 +106,7 @@ func TestShellRunner_NilWritersFallbackToProcessStdio(t *testing.T) {
 	out, err := r.Run(context.Background(),
 		&config.Group{Name: "g", Command: "echo"}, []string{"x"}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "x\n", out)
+	assert.Equal(t, "x\n", out.Output)
 }
 
 func TestShellRunner_FailingCommand(t *testing.T) {
@@ -143,7 +144,7 @@ func TestShellRunner_EnvOverlayPrecedence(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// group env overrides global, global overrides base
-	assert.Equal(t, "group\n", out)
+	assert.Equal(t, "group\n", out.Output)
 }
 
 func TestMergeEnvs(t *testing.T) {
@@ -185,4 +186,24 @@ func TestShellFlag(t *testing.T) {
 	t.Parallel()
 	// shellFlag returns a non-empty platform-specific switch.
 	assert.NotEmpty(t, shellFlag())
+}
+
+func TestShellRunner_SeparatesStdoutAndStderr(t *testing.T) {
+	skipOnWindows(t)
+	t.Parallel()
+	r := &ShellRunner{Stdout: io.Discard, Stderr: io.Discard}
+	g := &config.Group{
+		Name:    "probe",
+		Command: "printf 'out'; printf 'err' >&2",
+		Shell:   "/bin/sh",
+	}
+	rr, err := r.Run(context.Background(), g, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "out", rr.Stdout)
+	assert.Equal(t, "err", rr.Stderr)
+	assert.Contains(t, rr.Output, "out")
+	assert.Contains(t, rr.Output, "err")
+	assert.Equal(t, "ok", rr.Status)
+	assert.Equal(t, 0, rr.ExitCode)
+	assert.GreaterOrEqual(t, rr.DurationMs, int64(0))
 }

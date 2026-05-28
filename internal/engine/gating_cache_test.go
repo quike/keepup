@@ -77,10 +77,11 @@ func TestEngine_SkipIf(t *testing.T) {
 
 		require.NoError(t, e.RunFlow(context.Background(), "f"))
 		assert.Empty(t, r.calls, "runner must not be called when skip-if passes")
-		// Skipped group still publishes an (empty) output.
+		// Skipped group still publishes a (status=skipped) result.
 		v, ok := e.Outputs().Get("a")
 		assert.True(t, ok)
-		assert.Equal(t, "", v)
+		assert.Equal(t, "", v.Output)
+		assert.Equal(t, "skipped", v.Status)
 	})
 
 	t.Run("predicate fails → group runs", func(t *testing.T) {
@@ -123,7 +124,8 @@ func TestEngine_Cache_MissThenHit(t *testing.T) {
 	require.NoError(t, e2.RunFlow(context.Background(), "f"))
 	assert.Empty(t, r2.calls, "cache hit must skip the runner")
 	v, _ := e2.Outputs().Get("build")
-	assert.Equal(t, "compiled\n", v, "cache hit replays the original output")
+	assert.Equal(t, "compiled\n", v.Output, "cache hit replays the original output")
+	assert.Equal(t, "cached", v.Status)
 }
 
 func TestEngine_Cache_InputChangeBusts(t *testing.T) {

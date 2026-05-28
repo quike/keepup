@@ -9,12 +9,13 @@ import (
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/plan"
+	"github.com/quike/keepup/internal/result"
 	"github.com/quike/keepup/internal/template"
 )
 
 // evalWhen renders a step's `when` predicate and reports whether the step
 // should run. The result is falsey (skip) for "", "false", "0", "no", "off".
-func (e *Engine) evalWhen(expr string, baseline map[string]string) (bool, error) {
+func (e *Engine) evalWhen(expr string, baseline map[string]result.RunResult) (bool, error) {
 	out, err := e.expander.Expand(expr, template.Data{Outputs: baseline, Env: e.cfg.Env})
 	if err != nil {
 		return false, err

@@ -10,6 +10,7 @@ import (
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/plan"
+	"github.com/quike/keepup/internal/result"
 )
 
 // dagScheduler holds the scheduler-goroutine-local bookkeeping for a dag run.
@@ -45,7 +46,7 @@ type dagScheduler struct {
 	launch func(name string)
 	cancel context.CancelFunc
 
-	baseline func() map[string]string // stable snapshot for when: evaluation
+	baseline func() map[string]result.RunResult // stable snapshot for when: evaluation
 }
 
 // onDone resolves a terminal node's successors. A skipped node poisons its
@@ -146,10 +147,10 @@ func (e *Engine) runDAGPlan(ctx context.Context, p *plan.Plan, flow *config.Flow
 
 	var (
 		snapMu sync.RWMutex
-		snap   = make(map[string]string, len(p.Members))
+		snap   = make(map[string]result.RunResult, len(p.Members))
 	)
 	maps.Copy(snap, e.outputs.Snapshot())
-	baseline := func() map[string]string {
+	baseline := func() map[string]result.RunResult {
 		snapMu.RLock()
 		defer snapMu.RUnlock()
 		return cloneSnapshot(snap)
@@ -227,8 +228,8 @@ func (e *Engine) emitGroupSkipped(name, reason string) {
 	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped, Reason: reason})
 }
 
-func cloneSnapshot(m map[string]string) map[string]string {
-	out := make(map[string]string, len(m))
+func cloneSnapshot(m map[string]result.RunResult) map[string]result.RunResult {
+	out := make(map[string]result.RunResult, len(m))
 	maps.Copy(out, m)
 	return out
 }

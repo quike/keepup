@@ -12,8 +12,9 @@ import (
 	"github.com/quike/keepup/internal/watch"
 )
 
-func newWatchCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
-	return &cobra.Command{
+func newWatchCmd(opts *runtimeOpts, _ io.Writer) *cobra.Command {
+	var eventsPath string
+	cmd := &cobra.Command{
 		Use:   "watch [flow]",
 		Short: "Re-run a flow whenever its groups' cache.reads inputs change",
 		Long: "Watch the files declared in the cache.reads of the flow's groups and " +
@@ -21,57 +22,113 @@ func newWatchCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 			"so only the work that actually depends on a changed file re-executes.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.load(cmd.OutOrStdout()); err != nil {
-				return err
-			}
-			flowName := opts.cfg.Default
-			if len(args) == 1 {
-				flowName = args[0]
-			}
-			if flowName == "" {
-				return fmt.Errorf("no flow specified and no default declared")
-			}
-			flow, ok := opts.cfg.Flows[flowName]
-			if !ok {
-				return fmt.Errorf("flow %q not found", flowName)
-			}
-
-			patterns := watchPatterns(opts.cfg, &flow)
-			if len(patterns) == 0 {
-				return fmt.Errorf(
-					"flow %q has no watchable inputs: add a cache.reads block to at least one of its groups",
-					flowName,
-				)
-			}
-
-			src, err := watch.NewFSNotifySource()
-			if err != nil {
-				return fmt.Errorf("create file watcher: %w", err)
-			}
-			defer func() { _ = src.Close() }()
-
-			dirs, err := watch.ResolveWatchDirs(patterns)
-			if err != nil {
-				return fmt.Errorf("resolve watch dirs: %w", err)
-			}
-			for _, d := range dirs {
-				if err := src.Add(d); err != nil {
-					return fmt.Errorf("watch %q: %w", d, err)
-				}
-			}
-
-			fmt.Fprintf(stdout, "watching %d dir(s) for flow %q; press Ctrl-C to stop\n", len(dirs), flowName)
-
-			w := watch.New(patterns, src, watch.WithLogger(opts.log))
-			return w.Run(cmd.Context(), func(ctx context.Context, _ []string) error {
-				e := engine.New(opts.cfg,
-					engine.WithLogger(opts.log),
-					engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
-				)
-				return e.RunFlow(ctx, flowName)
-			})
+			return runWatch(cmd, args, opts, eventsPath)
 		},
 	}
+	cmd.Flags().StringVar(&eventsPath, "events", "",
+		"Write a JSON event stream to this file ('-' for stdout)")
+	return cmd
+}
+
+// resolveWatchFlow loads the config and returns the resolved flow name + flow.
+func resolveWatchFlow(cmd *cobra.Command, args []string, opts *runtimeOpts) (string, config.Flow, error) {
+	if err := opts.load(cmd.OutOrStdout()); err != nil {
+		return "", config.Flow{}, err
+	}
+	flowName := opts.cfg.Default
+	if len(args) == 1 {
+		flowName = args[0]
+	}
+	if flowName == "" {
+		return "", config.Flow{}, fmt.Errorf("no flow specified and no default declared")
+	}
+	flow, ok := opts.cfg.Flows[flowName]
+	if !ok {
+		return "", config.Flow{}, fmt.Errorf("flow %q not found", flowName)
+	}
+	return flowName, flow, nil
+}
+
+// watchSourceSetup bundles the fsnotify source, the dir count, and a cleanup
+// closure so setupWatchSource has a self-documenting return type.
+type watchSourceSetup struct {
+	src      watch.Source
+	dirCount int
+	close    func()
+}
+
+// setupWatchSource builds the fsnotify source and registers all resolved dirs.
+func setupWatchSource(patterns []string) (watchSourceSetup, error) {
+	src, err := watch.NewFSNotifySource()
+	if err != nil {
+		return watchSourceSetup{}, fmt.Errorf("create file watcher: %w", err)
+	}
+	dirs, err := watch.ResolveWatchDirs(patterns)
+	if err != nil {
+		_ = src.Close()
+		return watchSourceSetup{}, fmt.Errorf("resolve watch dirs: %w", err)
+	}
+	for _, d := range dirs {
+		if err := src.Add(d); err != nil {
+			_ = src.Close()
+			return watchSourceSetup{}, fmt.Errorf("watch %q: %w", d, err)
+		}
+	}
+	return watchSourceSetup{src: src, dirCount: len(dirs), close: func() { _ = src.Close() }}, nil
+}
+
+// runWatch is the body of the watch command, factored out of RunE so the
+// cyclomatic complexity stays inside the project's gocyclo budget.
+func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath string) error {
+	flowName, flow, err := resolveWatchFlow(cmd, args, opts)
+	if err != nil {
+		return err
+	}
+
+	patterns := watchPatterns(opts.cfg, &flow)
+	if len(patterns) == 0 {
+		return fmt.Errorf(
+			"flow %q has no watchable inputs: add a cache.reads block to at least one of its groups",
+			flowName,
+		)
+	}
+
+	setup, err := setupWatchSource(patterns)
+	if err != nil {
+		return err
+	}
+	defer setup.close()
+
+	// Banner goes to stderr so `--events -` can claim stdout for pure JSON.
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"watching %d dir(s) for flow %q; press Ctrl-C to stop\n",
+		setup.dirCount, flowName)
+
+	var emitter engine.Emitter
+	if eventsPath != "" {
+		ew, closeFn, oerr := openEventsWriter(eventsPath, cmd.OutOrStdout())
+		if oerr != nil {
+			return oerr
+		}
+		defer closeFn()
+		emitter = engine.NewJSONEmitter(ew)
+	}
+
+	w := watch.New(patterns, setup.src, watch.WithLogger(opts.log))
+	return w.Run(cmd.Context(), func(ctx context.Context, files []string) error {
+		if emitter != nil && len(files) > 0 {
+			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Files: files})
+		}
+		engineOpts := []engine.Option{
+			engine.WithLogger(opts.log),
+			engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
+		}
+		if emitter != nil {
+			engineOpts = append(engineOpts, engine.WithEmitter(emitter))
+		}
+		e := engine.New(opts.cfg, engineOpts...)
+		return e.RunFlow(ctx, flowName)
+	})
 }
 
 // watchPatterns collects the de-duplicated cache.reads globs across every group

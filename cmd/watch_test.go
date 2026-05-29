@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/engine"
 	"github.com/quike/keepup/internal/watch"
 )
 
@@ -62,6 +64,26 @@ flows:
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no watchable inputs")
+}
+
+// syncBuf is a goroutine-safe bytes.Buffer wrapper used by event-stream tests
+// so the writer-goroutine and the assertion-goroutine can share state without
+// tripping the race detector.
+type syncBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
 }
 
 // stubSource is a minimal watch.Source driven by the test.
@@ -118,6 +140,90 @@ func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	src.events <- watch.Event{Path: "README.md"}
 	time.Sleep(40 * time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&runs))
+}
+
+// TestWatchCmd_BannerGoesToStderr regression-pins that the
+// "watching N dir(s)..." banner now writes to stderr, so `--events -`
+// can claim stdout for pure JSON.
+func TestWatchCmd_BannerGoesToStderr(t *testing.T) {
+	t.Parallel()
+	cfg := `
+version: 2
+groups:
+  - name: a
+    command: echo
+    cache:
+      reads: ["*.txt"]
+flows:
+  f:
+    mode: step
+    steps:
+      - run: [a]
+`
+	cfgPath := writeTempConfig(t, cfg)
+	var stdout, stderr bytes.Buffer
+	rootCmd := newRootCmd(&stdout, &stderr)
+	rootCmd.SetArgs([]string{"watch", "f", "--config", cfgPath})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // cancel immediately so watch returns without iterating
+	rootCmd.SetContext(ctx)
+	_ = rootCmd.Execute()
+
+	assert.Contains(t, stderr.String(), "watching",
+		"banner must go to stderr so --events - can claim stdout")
+	assert.NotContains(t, stdout.String(), "watching",
+		"stdout must not carry the banner")
+}
+
+// TestWatchCmd_EventsWiring drives the wired-up onChange callback directly
+// (the same closure cmd/watch.go installs into Watcher.Run) and asserts the
+// JSON event stream contains a watch.trigger followed by flow.start /
+// flow.end. Uses stubSource to avoid real filesystem events. This test
+// exists separately from the end-to-end cobra path so a regression in either
+// the wiring shape OR the cobra flag plumbing surfaces clearly.
+func TestWatchCmd_EventsWiring(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
+	require.NoError(t, err)
+	flow := cfg.Flows["dev"]
+	patterns := watchPatterns(cfg, &flow)
+
+	src := newStubSource()
+	w := watch.New(patterns, src,
+		watch.WithDebounce(10*time.Millisecond),
+		watch.WithInitialRun(false))
+
+	sw := &syncBuf{}
+	emitter := engine.NewJSONEmitter(sw)
+
+	// onChange mirrors the production closure shape from cmd/watch.go.
+	onChange := func(ctx context.Context, files []string) error {
+		if len(files) > 0 {
+			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Files: files})
+		}
+		e := engine.New(cfg, engine.WithEmitter(emitter))
+		return e.RunFlow(ctx, "dev")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = w.Run(ctx, onChange) }()
+
+	src.events <- watch.Event{Path: "main.go"}
+	require.Eventually(t, func() bool {
+		return strings.Contains(sw.String(), `"event":"flow.end"`)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	got := sw.String()
+	triggerIdx := strings.Index(got, `"event":"watch.trigger"`)
+	flowStartIdx := strings.Index(got, `"event":"flow.start"`)
+	require.NotEqual(t, -1, triggerIdx, "watch.trigger must be emitted")
+	require.NotEqual(t, -1, flowStartIdx, "flow.start must be emitted")
+	assert.Less(t, triggerIdx, flowStartIdx,
+		"watch.trigger must precede flow.start within the same tick")
+	assert.Contains(t, got, `"files":["main.go"]`)
+	assert.Contains(t, got, `"event":"flow.end"`)
 }
 
 func TestWatchCmd_ErrorsOnUnknownFlow(t *testing.T) {

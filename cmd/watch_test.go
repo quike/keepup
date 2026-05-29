@@ -14,6 +14,7 @@ import (
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/engine"
+	"github.com/quike/keepup/internal/logger"
 	"github.com/quike/keepup/internal/watch"
 )
 
@@ -197,14 +198,10 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 	sw := &syncBuf{}
 	emitter := engine.NewJSONEmitter(sw)
 
-	// onChange mirrors the production closure shape from cmd/watch.go.
-	onChange := func(ctx context.Context, files []string) error {
-		if len(files) > 0 {
-			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Files: files})
-		}
-		e := engine.New(cfg, engine.WithEmitter(emitter))
-		return e.RunFlow(ctx, "dev")
-	}
+	// Build the engine opts the same way the command does, then exercise the
+	// REAL production closure (not a copy) so a wiring regression is caught.
+	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
+	onChange := buildOnChange(emitter, opts, "dev")
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

@@ -54,27 +54,31 @@ func resolveWatchFlow(cmd *cobra.Command, args []string, opts *runtimeOpts) (str
 type watchSourceSetup struct {
 	src      watch.Source
 	dirCount int
-	close    func()
+	cleanup  func()
 }
 
 // setupWatchSource builds the fsnotify source and registers all resolved dirs.
 func setupWatchSource(patterns []string) (watchSourceSetup, error) {
+	setup := watchSourceSetup{cleanup: func() {}}
 	src, err := watch.NewFSNotifySource()
 	if err != nil {
-		return watchSourceSetup{}, fmt.Errorf("create file watcher: %w", err)
+		return setup, fmt.Errorf("create file watcher: %w", err)
 	}
 	dirs, err := watch.ResolveWatchDirs(patterns)
 	if err != nil {
 		_ = src.Close()
-		return watchSourceSetup{}, fmt.Errorf("resolve watch dirs: %w", err)
+		return setup, fmt.Errorf("resolve watch dirs: %w", err)
 	}
 	for _, d := range dirs {
 		if err := src.Add(d); err != nil {
 			_ = src.Close()
-			return watchSourceSetup{}, fmt.Errorf("watch %q: %w", d, err)
+			return setup, fmt.Errorf("watch %q: %w", d, err)
 		}
 	}
-	return watchSourceSetup{src: src, dirCount: len(dirs), close: func() { _ = src.Close() }}, nil
+	setup.src = src
+	setup.dirCount = len(dirs)
+	setup.cleanup = func() { _ = src.Close() }
+	return setup, nil
 }
 
 // runWatch is the body of the watch command, factored out of RunE so the
@@ -97,7 +101,7 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 	if err != nil {
 		return err
 	}
-	defer setup.close()
+	defer setup.cleanup()
 
 	// Banner goes to stderr so `--events -` can claim stdout for pure JSON.
 	fmt.Fprintf(cmd.ErrOrStderr(),
@@ -115,7 +119,17 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 	}
 
 	w := watch.New(patterns, setup.src, watch.WithLogger(opts.log))
-	return w.Run(cmd.Context(), func(ctx context.Context, files []string) error {
+	return w.Run(cmd.Context(), buildOnChange(emitter, opts, flowName))
+}
+
+// buildOnChange returns the per-tick callback the watcher invokes on each
+// debounced batch. When an emitter is configured and the batch was triggered
+// by file changes (len(files) > 0), it emits a watch.trigger event before the
+// flow runs; the initial startup tick passes nil files and emits no trigger.
+// Each tick runs the flow on a fresh engine sharing the one emitter so the
+// event stream is a continuous sequence of per-tick flow envelopes.
+func buildOnChange(emitter engine.Emitter, opts *runtimeOpts, flowName string) func(context.Context, []string) error {
+	return func(ctx context.Context, files []string) error {
 		if emitter != nil && len(files) > 0 {
 			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Files: files})
 		}
@@ -128,7 +142,7 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 		}
 		e := engine.New(opts.cfg, engineOpts...)
 		return e.RunFlow(ctx, flowName)
-	})
+	}
 }
 
 // watchPatterns collects the de-duplicated cache.reads globs across every group

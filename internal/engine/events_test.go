@@ -137,3 +137,38 @@ func TestJSONEmitter_DAGSkippedReason(t *testing.T) {
 	assert.Equal(t, EventFlowEnd, flowEnd.Event, "flow.end event must be emitted")
 	assert.Equal(t, StatusOK, flowEnd.Status, "skip cascade must not turn flow.end into a failure")
 }
+
+// TestEvent_WatchTriggerJSONRoundTrip pins the wire format for the new
+// watch.trigger event: the Files field must survive a JSON round-trip and
+// preserve order (we emit files sorted at the watch layer).
+func TestEvent_WatchTriggerJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+	in := Event{
+		Event: EventWatchTrigger,
+		Files: []string{"a.go", "b.go", "c.go"},
+	}
+	b, err := json.Marshal(&in)
+	require.NoError(t, err)
+
+	var out Event
+	require.NoError(t, json.Unmarshal(b, &out))
+	assert.Equal(t, in.Event, out.Event)
+	assert.Equal(t, in.Files, out.Files)
+
+	// Wire-format assertion: the JSON contains a non-empty files array.
+	got := string(b)
+	assert.Contains(t, got, `"event":"watch.trigger"`)
+	assert.Contains(t, got, `"files":["a.go","b.go","c.go"]`)
+}
+
+// TestEvent_FilesOmitEmpty asserts non-watch events do not include a "files"
+// key in their JSON — preserving byte-identical output for all existing
+// consumers of the event stream.
+func TestEvent_FilesOmitEmpty(t *testing.T) {
+	t.Parallel()
+	in := Event{Event: EventFlowStart, Flow: "ci"}
+	b, err := json.Marshal(&in)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"files"`,
+		"flow.start (and every other non-watch event) must omit files from JSON")
+}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/engine"
+	"github.com/quike/keepup/internal/logger"
 	"github.com/quike/keepup/internal/watch"
 )
 
@@ -64,6 +67,26 @@ flows:
 	assert.Contains(t, err.Error(), "no watchable inputs")
 }
 
+// syncBuf is a goroutine-safe bytes.Buffer wrapper used by event-stream tests
+// so the writer-goroutine and the assertion-goroutine can share state without
+// tripping the race detector.
+type syncBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
 // stubSource is a minimal watch.Source driven by the test.
 type stubSource struct {
 	events chan watch.Event
@@ -106,7 +129,7 @@ func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go func() {
-		_ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil })
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
 	}()
 
 	// A change to a Go file matches "**/*.go" → should trigger one re-run.
@@ -118,6 +141,146 @@ func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	src.events <- watch.Event{Path: "README.md"}
 	time.Sleep(40 * time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&runs))
+}
+
+// TestWatchCmd_BannerGoesToStderr regression-pins that the
+// "watching N dir(s)..." banner now writes to stderr, so `--events -`
+// can claim stdout for pure JSON.
+func TestWatchCmd_BannerGoesToStderr(t *testing.T) {
+	t.Parallel()
+	cfg := `
+version: 2
+groups:
+  - name: a
+    command: echo
+    cache:
+      reads: ["*.txt"]
+flows:
+  f:
+    mode: step
+    steps:
+      - run: [a]
+`
+	cfgPath := writeTempConfig(t, cfg)
+	var stdout, stderr bytes.Buffer
+	rootCmd := newRootCmd(&stdout, &stderr)
+	rootCmd.SetArgs([]string{"watch", "f", "--config", cfgPath})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // cancel immediately so watch returns without iterating
+	rootCmd.SetContext(ctx)
+	_ = rootCmd.Execute()
+
+	assert.Contains(t, stderr.String(), "watching",
+		"banner must go to stderr so --events - can claim stdout")
+	assert.NotContains(t, stdout.String(), "watching",
+		"stdout must not carry the banner")
+}
+
+// TestWatchCmd_EventsWiring drives the wired-up onChange callback directly
+// (the same closure cmd/watch.go installs into Watcher.Run) and asserts the
+// JSON event stream contains a watch.trigger followed by flow.start /
+// flow.end. Uses stubSource to avoid real filesystem events. This test
+// exists separately from the end-to-end cobra path so a regression in either
+// the wiring shape OR the cobra flag plumbing surfaces clearly.
+func TestWatchCmd_EventsWiring(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
+	require.NoError(t, err)
+	flow := cfg.Flows["dev"]
+	patterns := watchPatterns(cfg, &flow)
+
+	src := newStubSource()
+	w := watch.New(patterns, src,
+		watch.WithDebounce(10*time.Millisecond),
+		watch.WithInitialRun(false))
+
+	sw := &syncBuf{}
+	emitter := engine.NewJSONEmitter(sw)
+
+	// Build the engine opts the same way the command does, then exercise the
+	// REAL production closure (not a copy) so a wiring regression is caught.
+	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
+	onChange := buildOnChange(emitter, opts, "dev")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = w.Run(ctx, onChange) }()
+
+	src.events <- watch.Event{Path: "main.go"}
+	require.Eventually(t, func() bool {
+		return strings.Contains(sw.String(), `"event":"flow.end"`)
+	}, 2*time.Second, 10*time.Millisecond)
+
+	got := sw.String()
+	triggerIdx := strings.Index(got, `"event":"watch.trigger"`)
+	flowStartIdx := strings.Index(got, `"event":"flow.start"`)
+	require.NotEqual(t, -1, triggerIdx, "watch.trigger must be emitted")
+	require.NotEqual(t, -1, flowStartIdx, "flow.start must be emitted")
+	assert.Less(t, triggerIdx, flowStartIdx,
+		"watch.trigger must precede flow.start within the same tick")
+	assert.Contains(t, got, `"files":["main.go"]`)
+	assert.Contains(t, got, `"event":"flow.end"`)
+}
+
+// TestWatchCmd_InitialRunThenTrigger composes the REAL buildOnChange closure
+// with a watcher whose initial run is enabled, asserting the full ordered
+// contract end-to-end: the startup tick emits a flow envelope with NO
+// preceding watch.trigger, and a subsequent file change emits a watch.trigger
+// that (a) carries the flow name and (b) precedes the re-run's flow.start.
+// This guards the composition (runWatch wires buildOnChange into watch.Run)
+// that the per-piece tests do not cover together.
+func TestWatchCmd_InitialRunThenTrigger(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
+	require.NoError(t, err)
+	flow := cfg.Flows["dev"]
+	patterns := watchPatterns(cfg, &flow)
+
+	src := newStubSource()
+	w := watch.New(patterns, src,
+		watch.WithDebounce(10*time.Millisecond),
+		watch.WithInitialRun(true)) // exercise the startup tick
+
+	sw := &syncBuf{}
+	emitter := engine.NewJSONEmitter(sw)
+	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
+	onChange := buildOnChange(emitter, opts, "dev")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = w.Run(ctx, onChange) }()
+
+	// The initial run fires immediately with nil files: a flow envelope with
+	// NO watch.trigger before it.
+	require.Eventually(t, func() bool {
+		return strings.Contains(sw.String(), `"event":"flow.end"`)
+	}, 2*time.Second, 10*time.Millisecond)
+	initial := sw.String()
+	assert.NotContains(t, initial, `"event":"watch.trigger"`,
+		"the startup run must not emit a watch.trigger")
+	assert.Contains(t, initial, `"event":"flow.start"`)
+
+	// A real file change emits a watch.trigger carrying the flow, then re-runs.
+	// Wait for the re-run to FULLY complete (the second flow.end) before
+	// sampling, so the trigger and the whole re-run envelope are all present —
+	// otherwise we'd race the re-run's flow.start, which is emitted just after
+	// the trigger.
+	src.events <- watch.Event{Path: "main.go"}
+	require.Eventually(t, func() bool {
+		return strings.Count(sw.String(), `"event":"flow.end"`) >= 2
+	}, 2*time.Second, 10*time.Millisecond)
+	full := sw.String()
+
+	// #1: the trigger self-identifies its flow (consistent with flow.*/group.* events).
+	assert.Contains(t, full, `"event":"watch.trigger","flow":"dev","files":["main.go"]`,
+		"watch.trigger must carry the flow name and changed files")
+
+	// The trigger must be followed by the re-run's flow.start.
+	triggerIdx := strings.Index(full, `"event":"watch.trigger"`)
+	require.NotEqual(t, -1, triggerIdx)
+	assert.NotEqual(t, -1, strings.Index(full[triggerIdx:], `"event":"flow.start"`),
+		"a flow.start must follow the watch.trigger")
 }
 
 func TestWatchCmd_ErrorsOnUnknownFlow(t *testing.T) {

@@ -143,3 +143,6 @@ config-*.yml
 !**/**/test-resources/config-**.yml
 *.pem
 .claude/
+
+# keepup fingerprint cache (runtime artifact)
+.keepup-cache/

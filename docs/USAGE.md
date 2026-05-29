@@ -96,6 +96,28 @@ keepup watch dev   # build now, then rebuild on every .go change; Ctrl-C to stop
 The flow needs at least one group with a `cache.reads` block — that's the
 watch set.
 
+### Watching a flow with the event stream
+
+`keepup watch` accepts the same `--events <path|->` flag as `keepup run`:
+
+```bash
+keepup watch ci --events -
+```
+
+The "watching N dir(s)…" banner writes to **stderr**, so stdout carries pure JSON. Each re-run emits a full `flow.start` / `group.*` / `flow.end` envelope, and every debounced batch of file changes emits a `watch.trigger` event listing the changed files:
+
+```
+{"event":"flow.start","flow":"ci","mode":"step"}
+{"event":"group.end","group":"build","status":"ok","durationMs":1}
+{"event":"flow.end","flow":"ci","status":"ok","durationMs":1}
+{"event":"watch.trigger","flow":"ci","files":["x.txt"]}
+{"event":"flow.start","flow":"ci","mode":"step"}
+{"event":"group.end","group":"build","status":"ok","durationMs":4}
+{"event":"flow.end","flow":"ci","status":"ok","durationMs":4}
+```
+
+The first envelope is the initial run on startup — it has no preceding `watch.trigger`. Pass `--events <file>` to write the stream to a file instead of stdout.
+
 ## Multiple flows over the same groups
 
 The same groups can power many flows — that's the point of the split.

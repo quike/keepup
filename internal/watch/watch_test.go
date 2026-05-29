@@ -43,7 +43,7 @@ func TestWatcher_InitialRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
-		_ = w.Run(ctx, func(context.Context) error {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error {
 			atomic.AddInt32(&runs, 1)
 			return nil
 		})
@@ -64,7 +64,9 @@ func TestWatcher_RerunsOnMatchingChange(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go func() { _ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil }) }()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
+	}()
 
 	src.events <- Event{Path: "main.go"}
 	require.Eventually(t, func() bool { return atomic.LoadInt32(&runs) == 1 }, time.Second, 5*time.Millisecond)
@@ -78,7 +80,9 @@ func TestWatcher_IgnoresNonMatchingChange(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go func() { _ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil }) }()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
+	}()
 
 	src.events <- Event{Path: "README.md"}
 	// Give the loop time to (not) react.
@@ -94,7 +98,9 @@ func TestWatcher_DebouncesBurst(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go func() { _ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil }) }()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
+	}()
 
 	// A rapid burst should collapse into a single run.
 	for range 5 {
@@ -116,7 +122,7 @@ func TestWatcher_FailingOnChangeKeepsWatching(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go func() {
-		_ = w.Run(ctx, func(context.Context) error {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error {
 			atomic.AddInt32(&runs, 1)
 			return errors.New("boom")
 		})
@@ -136,7 +142,7 @@ func TestWatcher_StopsOnContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- w.Run(ctx, func(context.Context) error { return nil }) }()
+	go func() { done <- w.Run(ctx, func(_ context.Context, _ []string) error { return nil }) }()
 
 	cancel()
 	select {
@@ -155,9 +161,133 @@ func TestWatcher_SourceErrorIsNonFatal(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go func() { _ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil }) }()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
+	}()
 
 	src.errs <- errors.New("transient")
 	src.events <- Event{Path: "main.go"}
 	require.Eventually(t, func() bool { return atomic.LoadInt32(&runs) == 1 }, time.Second, 5*time.Millisecond)
+}
+
+// TestWatcher_AccumulatesFilesAcrossDebounce asserts that multiple events
+// within a single debounce window are deduplicated and passed to onChange as
+// a sorted slice.
+func TestWatcher_AccumulatesFilesAcrossDebounce(t *testing.T) {
+	t.Parallel()
+	src := newFakeSource()
+	w := New([]string{"**/*.go"}, src,
+		WithDebounce(20*time.Millisecond),
+		WithInitialRun(false))
+
+	var (
+		mu       sync.Mutex
+		received [][]string
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, files []string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			received = append(received, append([]string(nil), files...))
+			return nil
+		})
+	}()
+
+	// Three events within the debounce window; one duplicate.
+	src.events <- Event{Path: "b.go"}
+	src.events <- Event{Path: "a.go"}
+	src.events <- Event{Path: "b.go"} // duplicate of the first
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) == 1
+	}, time.Second, 5*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"a.go", "b.go"}, received[0],
+		"files must be deduplicated and sorted")
+}
+
+// TestWatcher_ResetsAccumulatorBetweenTicks asserts that the accumulator does
+// NOT leak files from one tick into the next.
+func TestWatcher_ResetsAccumulatorBetweenTicks(t *testing.T) {
+	t.Parallel()
+	src := newFakeSource()
+	w := New([]string{"**/*.go"}, src,
+		WithDebounce(20*time.Millisecond),
+		WithInitialRun(false))
+
+	var (
+		mu       sync.Mutex
+		received [][]string
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, files []string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			received = append(received, append([]string(nil), files...))
+			return nil
+		})
+	}()
+
+	src.events <- Event{Path: "a.go"}
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) == 1
+	}, time.Second, 5*time.Millisecond)
+
+	src.events <- Event{Path: "c.go"}
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) == 2
+	}, time.Second, 5*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"a.go"}, received[0])
+	assert.Equal(t, []string{"c.go"}, received[1],
+		"second tick must not include first tick's files")
+}
+
+// TestWatcher_InitialRunPassesNilFiles pins the contract that the startup
+// (initial) tick conveys "no file triggered this" via a nil/empty files slice
+// — used by cmd/watch.go to suppress the watch.trigger event on initial run.
+func TestWatcher_InitialRunPassesNilFiles(t *testing.T) {
+	t.Parallel()
+	src := newFakeSource()
+	w := New([]string{"**/*.go"}, src, WithInitialRun(true))
+
+	var (
+		mu     sync.Mutex
+		called bool
+		gotLen int
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, files []string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			called = true
+			gotLen = len(files)
+			return nil
+		})
+	}()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return called
+	}, time.Second, 5*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 0, gotLen, "initial run must pass an empty/nil files slice")
 }

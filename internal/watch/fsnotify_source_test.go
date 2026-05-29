@@ -30,7 +30,9 @@ func TestFSNotifySource_RealFileChange(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go func() { _ = w.Run(ctx, func(context.Context) error { atomic.AddInt32(&runs, 1); return nil }) }()
+	go func() {
+		_ = w.Run(ctx, func(_ context.Context, _ []string) error { atomic.AddInt32(&runs, 1); return nil })
+	}()
 
 	// Give the watcher a moment to settle, then modify the file.
 	time.Sleep(50 * time.Millisecond)

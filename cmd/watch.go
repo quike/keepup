@@ -63,7 +63,7 @@ func newWatchCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 			fmt.Fprintf(stdout, "watching %d dir(s) for flow %q; press Ctrl-C to stop\n", len(dirs), flowName)
 
 			w := watch.New(patterns, src, watch.WithLogger(opts.log))
-			return w.Run(cmd.Context(), func(ctx context.Context) error {
+			return w.Run(cmd.Context(), func(ctx context.Context, _ []string) error {
 				e := engine.New(opts.cfg,
 					engine.WithLogger(opts.log),
 					engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),

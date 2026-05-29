@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/quike/keepup/internal/logger"
@@ -62,15 +63,19 @@ func New(patterns []string, src Source, opts ...Option) *Watcher {
 }
 
 // Run blocks, invoking onChange on each debounced batch of matching changes,
-// until ctx is canceled. A failing onChange is logged but does not stop the
-// watch — the whole point is to keep iterating. New directories that appear
-// under watched trees are added automatically.
-func (w *Watcher) Run(ctx context.Context, onChange func(context.Context) error) error {
+// until ctx is canceled. The slice passed to onChange contains the
+// deduplicated, sorted list of matched paths accumulated during the just-closed
+// debounce window. The initial run, when enabled, passes a nil slice — it was
+// not triggered by any file. A failing onChange is logged but does not stop
+// the watch — the whole point is to keep iterating. New directories that
+// appear under watched trees are added automatically.
+func (w *Watcher) Run(ctx context.Context, onChange func(context.Context, []string) error) error {
 	if w.initialRun {
-		w.invoke(ctx, onChange)
+		w.invoke(ctx, onChange, nil)
 	}
 
 	var debounceC <-chan time.Time
+	pending := make(map[string]struct{})
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,12 +88,19 @@ func (w *Watcher) Run(ctx context.Context, onChange func(context.Context) error)
 			}
 			if Matches(w.patterns, ev.Path) {
 				w.log.Debug("change detected", "path", ev.Path)
+				pending[ev.Path] = struct{}{}
 				debounceC = time.After(w.debounce)
 			}
 
 		case <-debounceC:
 			debounceC = nil
-			w.invoke(ctx, onChange)
+			files := make([]string, 0, len(pending))
+			for p := range pending {
+				files = append(files, p)
+				delete(pending, p)
+			}
+			sort.Strings(files)
+			w.invoke(ctx, onChange, files)
 
 		case err := <-w.src.Errors():
 			if err != nil {
@@ -98,8 +110,8 @@ func (w *Watcher) Run(ctx context.Context, onChange func(context.Context) error)
 	}
 }
 
-func (w *Watcher) invoke(ctx context.Context, onChange func(context.Context) error) {
-	if err := onChange(ctx); err != nil {
+func (w *Watcher) invoke(ctx context.Context, onChange func(context.Context, []string) error, files []string) {
+	if err := onChange(ctx, files); err != nil {
 		w.log.Error("run failed; continuing to watch", "err", err.Error())
 	}
 }

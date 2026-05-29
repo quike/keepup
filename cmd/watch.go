@@ -131,7 +131,7 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 func buildOnChange(emitter engine.Emitter, opts *runtimeOpts, flowName string) func(context.Context, []string) error {
 	return func(ctx context.Context, files []string) error {
 		if emitter != nil && len(files) > 0 {
-			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Files: files})
+			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Flow: flowName, Files: files})
 		}
 		engineOpts := []engine.Option{
 			engine.WithLogger(opts.log),

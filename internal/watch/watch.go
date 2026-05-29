@@ -74,7 +74,16 @@ func (w *Watcher) Run(ctx context.Context, onChange func(context.Context, []stri
 		w.invoke(ctx, onChange, nil)
 	}
 
-	var debounceC <-chan time.Time
+	// debounce is a single reusable timer, armed via Reset on each matching
+	// change and consumed when the quiet window elapses. Reusing one timer
+	// (rather than time.After per event) avoids allocating a timer per
+	// filesystem event during large bursts such as a branch switch. Go 1.23+
+	// timer semantics make Stop/Reset race-free with the channel receive, so
+	// no manual drain is needed.
+	debounce := time.NewTimer(w.debounce)
+	debounce.Stop()
+	defer debounce.Stop()
+
 	pending := make(map[string]struct{})
 	for {
 		select {
@@ -89,11 +98,10 @@ func (w *Watcher) Run(ctx context.Context, onChange func(context.Context, []stri
 			if Matches(w.patterns, ev.Path) {
 				w.log.Debug("change detected", "path", ev.Path)
 				pending[ev.Path] = struct{}{}
-				debounceC = time.After(w.debounce)
+				debounce.Reset(w.debounce)
 			}
 
-		case <-debounceC:
-			debounceC = nil
+		case <-debounce.C:
 			files := make([]string, 0, len(pending))
 			for p := range pending {
 				files = append(files, p)

@@ -223,6 +223,66 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 	assert.Contains(t, got, `"event":"flow.end"`)
 }
 
+// TestWatchCmd_InitialRunThenTrigger composes the REAL buildOnChange closure
+// with a watcher whose initial run is enabled, asserting the full ordered
+// contract end-to-end: the startup tick emits a flow envelope with NO
+// preceding watch.trigger, and a subsequent file change emits a watch.trigger
+// that (a) carries the flow name and (b) precedes the re-run's flow.start.
+// This guards the composition (runWatch wires buildOnChange into watch.Run)
+// that the per-piece tests do not cover together.
+func TestWatchCmd_InitialRunThenTrigger(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
+	require.NoError(t, err)
+	flow := cfg.Flows["dev"]
+	patterns := watchPatterns(cfg, &flow)
+
+	src := newStubSource()
+	w := watch.New(patterns, src,
+		watch.WithDebounce(10*time.Millisecond),
+		watch.WithInitialRun(true)) // exercise the startup tick
+
+	sw := &syncBuf{}
+	emitter := engine.NewJSONEmitter(sw)
+	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
+	onChange := buildOnChange(emitter, opts, "dev")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = w.Run(ctx, onChange) }()
+
+	// The initial run fires immediately with nil files: a flow envelope with
+	// NO watch.trigger before it.
+	require.Eventually(t, func() bool {
+		return strings.Contains(sw.String(), `"event":"flow.end"`)
+	}, 2*time.Second, 10*time.Millisecond)
+	initial := sw.String()
+	assert.NotContains(t, initial, `"event":"watch.trigger"`,
+		"the startup run must not emit a watch.trigger")
+	assert.Contains(t, initial, `"event":"flow.start"`)
+
+	// A real file change emits a watch.trigger carrying the flow, then re-runs.
+	// Wait for the re-run to FULLY complete (the second flow.end) before
+	// sampling, so the trigger and the whole re-run envelope are all present —
+	// otherwise we'd race the re-run's flow.start, which is emitted just after
+	// the trigger.
+	src.events <- watch.Event{Path: "main.go"}
+	require.Eventually(t, func() bool {
+		return strings.Count(sw.String(), `"event":"flow.end"`) >= 2
+	}, 2*time.Second, 10*time.Millisecond)
+	full := sw.String()
+
+	// #1: the trigger self-identifies its flow (consistent with flow.*/group.* events).
+	assert.Contains(t, full, `"event":"watch.trigger","flow":"dev","files":["main.go"]`,
+		"watch.trigger must carry the flow name and changed files")
+
+	// The trigger must be followed by the re-run's flow.start.
+	triggerIdx := strings.Index(full, `"event":"watch.trigger"`)
+	require.NotEqual(t, -1, triggerIdx)
+	assert.NotEqual(t, -1, strings.Index(full[triggerIdx:], `"event":"flow.start"`),
+		"a flow.start must follow the watch.trigger")
+}
+
 func TestWatchCmd_ErrorsOnUnknownFlow(t *testing.T) {
 	t.Parallel()
 	cfg := `

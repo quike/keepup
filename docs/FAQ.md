@@ -441,10 +441,10 @@ watch started are the one gap — restart watch if you add a whole new source ro
 
 ### Does `keepup watch` emit the same event stream as `keepup run`?
 
-Yes. `keepup watch --events <path|->` emits the same `flow.start` / `group.start` / `group.end` / `flow.end` events as `run`, one envelope per re-run, plus a `watch.trigger` event before each re-run carrying the deduplicated, sorted list of file paths that triggered the debounced batch:
+Yes. `keepup watch --events <path|->` emits the same `flow.start` / `group.start` / `group.end` / `flow.end` events as `run`, one envelope per re-run, plus a `watch.trigger` event before each re-run carrying the flow name and the deduplicated, sorted list of file paths that triggered the debounced batch:
 
 ```
-{"event":"watch.trigger","files":["src/main.go","src/util.go"]}
+{"event":"watch.trigger","flow":"ci","files":["src/main.go","src/util.go"]}
 ```
 
 The initial run on startup emits no `watch.trigger` — the leading `flow.start` marks it. The `"watching N dir(s)…"` banner writes to stderr, so `--events -` yields pure JSON on stdout.

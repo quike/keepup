@@ -110,7 +110,7 @@ The "watching N dir(s)…" banner writes to **stderr**, so stdout carries pure J
 {"event":"flow.start","flow":"ci","mode":"step"}
 {"event":"group.end","group":"build","status":"ok","durationMs":1}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":1}
-{"event":"watch.trigger","files":["x.txt"]}
+{"event":"watch.trigger","flow":"ci","files":["x.txt"]}
 {"event":"flow.start","flow":"ci","mode":"step"}
 {"event":"group.end","group":"build","status":"ok","durationMs":4}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":4}

@@ -14,7 +14,7 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: quike/workflow-github/.github/workflows/release.yml@v1
+    uses: quike/workflow-github/.github/workflows/release.yml@2840fd5aff5f259fa27b1c59fefb8c857a366c34 # v1
     secrets: inherit
 
   build:
@@ -23,8 +23,8 @@ jobs:
       contents: write
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod
       - name: Release outputs
@@ -41,7 +41,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.release.outputs.release-version }}
         run: make build VERSION="${RELEASE_VERSION:-0.0.0}"
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: target/coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}

@@ -289,6 +289,69 @@ flows:
 	assert.Contains(t, err.Error(), "not produced by an earlier step")
 }
 
+// selfRefYAML wraps a group body in a minimal step-mode config.
+func selfRefYAML(groupBody string) string {
+	return "version: 2\ngroups:\n" + groupBody + `
+flows:
+  f:
+    steps:
+      - run: [self]
+`
+}
+
+// selfRefDAGYAML wraps a group body in a minimal dag-mode config.
+func selfRefDAGYAML(groupBody string) string {
+	return "version: 2\ngroups:\n" + groupBody + `
+flows:
+  f:
+    mode: dag
+    run: [self]
+`
+}
+
+func TestValidateReferences_StepSelfRef_MultiGroup(t *testing.T) {
+	yml := selfRefYAML(`  - name: self
+    shell: sh
+    commands:
+      - echo hi
+      - echo {{ output "self" }}
+`)
+	_, err := NewConfig([]byte(yml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "references its own output",
+		"self-ref error must mention the key phrase")
+	assert.Contains(t, err.Error(), "cannot consume each other",
+		"multi-command group self-ref must include the guidance hint")
+}
+
+func TestValidateReferences_DAGSelfRef_MultiGroup(t *testing.T) {
+	yml := selfRefDAGYAML(`  - name: self
+    shell: sh
+    commands:
+      - echo hi
+      - echo {{ output "self" }}
+`)
+	_, err := NewConfig([]byte(yml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "references its own output",
+		"dag self-ref error must mention the key phrase")
+	assert.Contains(t, err.Error(), "cannot consume each other",
+		"multi-command group dag self-ref must include the guidance hint")
+}
+
+func TestValidateReferences_DAGSelfRef_SingularGroup(t *testing.T) {
+	yml := selfRefDAGYAML(`  - name: self
+    shell: sh
+    command: echo {{ output "self" }}
+`)
+	_, err := NewConfig([]byte(yml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "references its own output",
+		"singular group dag self-ref error must mention the key phrase")
+	assert.NotContains(t, err.Error(), "cannot consume each other",
+		"singular group must not include the multi-command hint")
+}
+
 func TestLoadConfig_CommandsFixture(t *testing.T) {
 	cfg, err := LoadConfig("./test-resources/config-commands-valid.yml")
 	require.NoError(t, err)

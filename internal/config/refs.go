@@ -34,6 +34,16 @@ func ExtractRefs(g *Group) ([]string, error) {
 	return out, nil
 }
 
+// selfRefHint explains the intra-group limitation for multi-command groups: a
+// commands: entry cannot consume an earlier entry's output, which is the
+// usual intent behind a self-reference.
+func selfRefHint(g *Group) string {
+	if g == nil || len(g.CommandList()) <= 1 {
+		return ""
+	}
+	return " (commands in a group cannot consume each other's output; split into separate groups or pipe within a single shell entry)"
+}
+
 // ValidateReferences runs strict-mode reference checks on every flow:
 //
 //   - every {{ output.X }} must point to a group that appears earlier in the
@@ -82,6 +92,12 @@ func (c *Config) checkStepRefs(flowName string, f *Flow, memberSet map[string]st
 				return fmt.Errorf("flow %q step %d: %w", flowName, stepIdx+1, err)
 			}
 			for _, ref := range refs {
+				if ref == member {
+					return fmt.Errorf(
+						"flow %q step %d: group %q references its own output%s",
+						flowName, stepIdx+1, member, selfRefHint(g),
+					)
+				}
 				if _, ok := memberSet[ref]; !ok {
 					return fmt.Errorf(
 						"flow %q step %d: group %q references {{ output.%s }}, but %q is not part of this flow",
@@ -152,7 +168,8 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 			)
 		}
 		if ref == m {
-			return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+			return fmt.Errorf("flow %q: group %q references its own output%s",
+				flowName, m, selfRefHint(c.GroupByName(m)))
 		}
 		adj[ref] = append(adj[ref], m)
 		inDeg[m]++

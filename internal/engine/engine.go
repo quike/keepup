@@ -167,6 +167,29 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 	return envelope{timeout: d, retries: retries}
 }
 
+// expandCommands renders every command in the group's normalized list against
+// the available outputs/env. The expanded specs are what the runner, cache,
+// and logs all see.
+func (e *Engine) expandCommands(group *config.Group, data template.Data) ([]config.CommandSpec, error) {
+	specs := group.CommandList()
+	expanded := make([]config.CommandSpec, len(specs))
+	for i, s := range specs {
+		cmd, err := e.expander.Expand(s.Command, data)
+		if err != nil {
+			return nil, fmt.Errorf("group %q: expand command: %w", group.Name, err)
+		}
+		params := make([]string, len(s.Params))
+		for j, p := range s.Params {
+			params[j], err = e.expander.Expand(p, data)
+			if err != nil {
+				return nil, fmt.Errorf("group %q: expand param %d: %w", group.Name, j+1, err)
+			}
+		}
+		expanded[i] = config.CommandSpec{Command: cmd, Params: params, IsShell: s.IsShell}
+	}
+	return expanded, nil
+}
+
 // runGroup decides whether and how to execute a group. The decision order is:
 //
 //  1. dry-run    → log intent, do nothing else (gating/cache are not evaluated)
@@ -194,25 +217,10 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 
 	data := template.Data{Outputs: baseline, Env: e.cfg.Env}
 
-	// Expand every command in the group's normalized list against the
-	// available outputs/env. The expanded specs are what the runner, cache,
-	// and logs all see.
 	g := *group
-	specs := group.CommandList()
-	expanded := make([]config.CommandSpec, len(specs))
-	for i, s := range specs {
-		cmd, err := e.expander.Expand(s.Command, data)
-		if err != nil {
-			return fmt.Errorf("group %q: expand command: %w", group.Name, err)
-		}
-		params := make([]string, len(s.Params))
-		for j, p := range s.Params {
-			params[j], err = e.expander.Expand(p, data)
-			if err != nil {
-				return fmt.Errorf("group %q: expand param %d: %w", group.Name, j+1, err)
-			}
-		}
-		expanded[i] = config.CommandSpec{Command: cmd, Params: params, IsShell: s.IsShell}
+	expanded, err := e.expandCommands(group, data)
+	if err != nil {
+		return err
 	}
 
 	if e.dryRun {
@@ -269,7 +277,9 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 // timeout and retrying up to env.retries additional times on failure. A retry
 // replays the whole sequence from the first command. Backoff between attempts
 // respects ctx cancellation.
-func (e *Engine) execWithEnvelope(ctx context.Context, group *config.Group, commands []config.CommandSpec, env envelope) (result.RunResult, error) {
+func (e *Engine) execWithEnvelope(
+	ctx context.Context, group *config.Group, commands []config.CommandSpec, env envelope,
+) (result.RunResult, error) {
 	attempts := 1 + env.retries
 	var (
 		out result.RunResult
@@ -309,6 +319,9 @@ func (e *Engine) execWithEnvelope(ctx context.Context, group *config.Group, comm
 func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands []config.CommandSpec) (result.RunResult, error) {
 	var agg result.RunResult
 	for i, s := range commands {
+		if err := ctx.Err(); err != nil {
+			return agg, err
+		}
 		sg := *group
 		sg.Command = s.Command
 		if !s.IsShell {

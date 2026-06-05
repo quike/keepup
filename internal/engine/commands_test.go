@@ -14,9 +14,9 @@ import (
 	"github.com/quike/keepup/internal/template"
 )
 
-// specRunner records each command invocation (argv0, params, shell) and
-// returns scripted results keyed by argv0. failOnce entries fail the first
-// invocation of that command and succeed afterwards.
+// specRunner records each command invocation (command, params, shell) and
+// returns scripted results keyed by the full command string. failOnce entries
+// fail the first invocation of that command and succeed afterwards.
 type specRunner struct {
 	mu       sync.Mutex
 	calls    []specCall

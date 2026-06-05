@@ -91,7 +91,8 @@ groups:
 | Field         | Type       | Required | Purpose                                                                                                                 |
 | ------------- | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `name`        | string     | yes      | Unique identifier. Referenced from flows and `{{ output.X }}`.                                                          |
-| `command`     | string     | yes      | The program/argv0 to execute.                                                                                           |
+| `command`     | string     | yes*     | The program/argv0 to execute. Mutually exclusive with `commands`.                                                       |
+| `commands`    | list       | no       | Ordered list of commands run sequentially; see [Multi-command groups](#multi-command-groups). Mutually exclusive with `command`/`params`. |
 | `params`      | `[]string` | no       | Arguments. Passed as a real argv list — **no shell parsing** by default.                                                |
 | `env`         | map        | no       | Per-group env overrides; applied on top of the global `env`.                                                            |
 | `shell`       | string     | no       | When non-empty, the named shell program runs `command + params` as a single shell-interpreted line (opt-in shell mode). |
@@ -120,6 +121,48 @@ Use this only when you actually need shell features (pipes, expansions,
 
 On Windows, the shell flag is `/C` and the default shell falls back to
 `%COMSPEC%` or `cmd.exe`.
+
+### Multi-command groups
+
+A group may run an ordered **sequence** of commands instead of a single
+`command` + `params` pair. Each entry in `commands:` selects its execution
+mode by shape — the same string-or-map rule as dag `run:` entries:
+
+1. a `{command, params}` map — safe argv exec, never a shell (ignores `shell:`
+   even when it is set)
+2. a bare string — a shell command line; requires `shell:` on the group
+3. a multiline (`|`) string — a script piped to the shell as one unit;
+   requires `shell:`
+
+```yaml
+groups:
+  - name: ci
+    shell: bash # required only for the string/script entries below
+    commands:
+      - { command: go, params: [build, "./..."] } # safe argv exec (no shell)
+      - go test ./... # shell command line
+      - | # multiline script
+        ./scripts/lint.sh --strict
+        echo done
+```
+
+Commands run in declared order; the first non-zero exit stops the sequence
+and fails the group (like `set -e`). The group stays keepup's unit of
+caching, gating, and output:
+
+- the stored result's `output` is the combined output of all commands, in
+  order; `exitCode` is the first failing command's (0 when all succeed);
+  `durationMs` covers the whole sequence
+- `cache` fingerprints every command in the list — changing any entry busts
+  the cache
+- `require`/`skip-if` gate the whole sequence, and templating expands each
+  entry's command/params individually
+
+The singular `command`/`params` form remains first-class and is internally
+normalized to a one-element `commands:` list, so both forms share one
+execution path. Setting both `command` and `commands` on one group is a
+load error, as is a string-form entry on a group with no `shell:`, or an
+empty `commands:` list.
 
 ### Referencing other groups' output
 

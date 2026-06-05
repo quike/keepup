@@ -118,6 +118,8 @@ func (g *Group) UseShell() bool { return g.Shell != "" }
 // command/params pair becomes a one-element list whose shell-ness mirrors
 // UseShell(). The engine, cache, and reference extraction all consume this
 // accessor so singular and multi groups share a single execution path.
+// The returned slice aliases the group's backing array and is intended for
+// read-only use; callers must not modify it.
 func (g *Group) CommandList() []CommandSpec {
 	if len(g.Commands) > 0 {
 		return g.Commands
@@ -225,6 +227,9 @@ type CommandSpec struct {
 func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
+		// Deliberately rejects whitespace-only strings (stricter than RunEntry's
+		// empty-only check) because a blank shell line is useless and likely a
+		// YAML indentation mistake.
 		if strings.TrimSpace(node.Value) == "" {
 			return fmt.Errorf("commands entry: must not be empty")
 		}
@@ -253,9 +258,10 @@ func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf(`commands entry: missing or empty "command"`)
 		}
 		return nil
-	default:
+	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
 		return fmt.Errorf("commands entry: must be a string or a {command, params} map")
 	}
+	return fmt.Errorf("commands entry: must be a string or a {command, params} map")
 }
 
 // NewConfig parses YAML bytes into a Config and validates the schema.

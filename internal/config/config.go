@@ -76,9 +76,16 @@ type Settings struct {
 // Group is an atomic, reusable command unit. Groups know nothing about flows;
 // composition lives in Flow.
 //
-// Shell controls how the command is launched:
+// A group runs either a single command (Command + Params) or an ordered
+// Commands list; the two are mutually exclusive and both normalize to
+// CommandList() so the engine has a single execution path.
+//
+// Shell controls how string-form commands are launched:
 //   - empty: exec directly with Params as argv (safe; no shell interpretation)
-//   - non-empty: pipe `command + params` through the named shell program (opt-in).
+//   - non-empty: pipe the command line through the named shell program (opt-in).
+//
+// In a Commands list, {command, params} entries are always safe argv exec and
+// ignore Shell; string entries require Shell to be set.
 //
 // Gating (Require, SkipIf) and Cache are optional short-circuits evaluated
 // before the command runs; see the engine for ordering semantics.
@@ -86,6 +93,7 @@ type Group struct {
 	Name        string            `yaml:"name"`
 	Command     string            `yaml:"command"`
 	Params      []string          `yaml:"params,omitempty"`
+	Commands    []CommandSpec     `yaml:"commands,omitempty"`
 	Shell       string            `yaml:"shell,omitempty"`
 	Description string            `yaml:"description,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
@@ -104,6 +112,18 @@ type Cache struct {
 
 // UseShell reports whether the group opted into shell mode.
 func (g *Group) UseShell() bool { return g.Shell != "" }
+
+// CommandList returns the group's commands as a normalized list. When
+// commands: is set it is returned as-is; otherwise the singular
+// command/params pair becomes a one-element list whose shell-ness mirrors
+// UseShell(). The engine, cache, and reference extraction all consume this
+// accessor so singular and multi groups share a single execution path.
+func (g *Group) CommandList() []CommandSpec {
+	if len(g.Commands) > 0 {
+		return g.Commands
+	}
+	return []CommandSpec{{Command: g.Command, Params: g.Params, IsShell: g.UseShell()}}
+}
 
 // Flow is a named pipeline composed of groups.
 //

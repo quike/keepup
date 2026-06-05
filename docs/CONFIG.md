@@ -160,6 +160,13 @@ caching, gating, and output:
 - `require`/`skip-if` gate the whole sequence, and templating expands each
   entry's command/params individually
 
+Entries in a `commands:` list cannot reference each other's output: the group
+publishes a single combined output only after the whole sequence finishes, and
+`{{ output "<this-group>" }}` inside one of its own entries is rejected at
+config load. To pipe one command's output into another within an entry, use a
+shell-form entry (`a | b`); to chain across cacheable units, split into
+separate groups.
+
 The singular `command`/`params` form remains first-class and is internally
 normalized to a one-element `commands:` list, so both forms share one
 execution path. Setting both `command` and `commands` on one group is a

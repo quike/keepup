@@ -22,7 +22,9 @@ const (
 	defaultPosixSh = "/bin/sh"
 )
 
-// Runner executes a single group and returns its structured RunResult.
+// Runner executes a single group and returns its structured RunResult. The
+// params argument is authoritative for the command's arguments; implementations
+// must not read g.Params or g.Commands.
 type Runner interface {
 	Run(ctx context.Context, g *config.Group, params []string, globalEnv map[string]string) (result.RunResult, error)
 }

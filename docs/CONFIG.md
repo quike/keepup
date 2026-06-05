@@ -101,6 +101,8 @@ groups:
 | `skip-if`     | string     | no       | Predicate command; exit 0 skips the group (see [Gating](#gating-skip-if-and-require)).                                  |
 | `cache`       | map        | no       | Skip the group when declared inputs are unchanged (see [Caching](#caching)).                                            |
 
+*`command` is required unless the group declares `commands:` instead; the two are mutually exclusive.
+
 ### Direct exec vs. shell mode
 
 By default keepup spawns `command` with `params` as a real argv list — no

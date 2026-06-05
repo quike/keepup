@@ -41,6 +41,9 @@ func Compute(spec *config.Cache, commands []config.CommandSpec) (string, error) 
 	// Salt with the full command list and method so any changed command (or a
 	// form change: argv vs shell) busts the cache even when inputs are
 	// identical. v3 marks the multi-command fingerprint format.
+	// The \x00/\x01/\x02 sentinel encoding assumes config values are free of
+	// these control bytes (user's own config; a collision only mis-caches their
+	// own group).
 	fmt.Fprintf(h, "v3\x00%s\x00", spec.Method)
 	for _, c := range commands {
 		fmt.Fprintf(h, "%s\x00%t\x00", c.Command, c.IsShell)

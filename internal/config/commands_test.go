@@ -163,3 +163,97 @@ flows:
 		[]CommandSpec{{Command: "echo", Params: []string{"hi"}}},
 		single.CommandList())
 }
+
+func TestNewConfig_CommandsValidation(t *testing.T) {
+	// wrap builds a minimal valid config around one group body.
+	wrap := func(groupYAML string) string {
+		return "version: 2\ngroups:\n" + groupYAML + `
+flows:
+  f:
+    steps:
+      - run: [g]
+`
+	}
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "both command and commands rejected",
+			yaml: wrap(`  - name: g
+    command: echo
+    commands:
+      - { command: echo, params: [x] }
+`),
+			wantErr: "set either 'command' or 'commands', not both",
+		},
+		{
+			name: "params alongside commands rejected",
+			yaml: wrap(`  - name: g
+    params: [x]
+    commands:
+      - { command: echo }
+`),
+			wantErr: "set either 'command' or 'commands', not both",
+		},
+		{
+			name: "explicitly empty commands list rejected",
+			yaml: wrap(`  - name: g
+    commands: []
+`),
+			wantErr: "'commands' must list at least one entry",
+		},
+		{
+			name:    "neither command nor commands rejected",
+			yaml:    wrap("  - name: g\n"),
+			wantErr: "missing command",
+		},
+		{
+			name: "string entry without shell rejected",
+			yaml: wrap(`  - name: g
+    commands:
+      - { command: echo, params: [x] }
+      - echo hi
+`),
+			wantErr: "commands[2] is a shell command line but 'shell' is not set",
+		},
+		{
+			name: "script entry without shell rejected",
+			yaml: wrap(`  - name: g
+    commands:
+      - |
+        echo one
+        echo two
+`),
+			wantErr: "commands[1] is a shell command line but 'shell' is not set",
+		},
+		{
+			name: "argv-only list without shell is fine",
+			yaml: wrap(`  - name: g
+    commands:
+      - { command: echo, params: [a] }
+      - { command: echo, params: [b] }
+`),
+		},
+		{
+			name: "string entries with shell are fine",
+			yaml: wrap(`  - name: g
+    shell: sh
+    commands:
+      - echo hi
+`),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewConfig([]byte(tc.yaml))
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

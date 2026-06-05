@@ -330,8 +330,8 @@ func (c *Config) indexGroups() (map[string]*Group, error) {
 		if g.Name == "" {
 			return nil, fmt.Errorf("groups[%d]: missing name", i)
 		}
-		if g.Command == "" {
-			return nil, fmt.Errorf("groups[%d] %q: missing command", i, g.Name)
+		if err := validateGroupCommands(i, g); err != nil {
+			return nil, err
 		}
 		if _, dup := out[g.Name]; dup {
 			return nil, fmt.Errorf("groups: duplicate name %q", g.Name)
@@ -359,6 +359,32 @@ func validateCache(g *Group) error {
 		// ok
 	default:
 		return fmt.Errorf("group %q: unknown cache.method %q (use 'hash' or 'mtime')", g.Name, g.Cache.Method)
+	}
+	return nil
+}
+
+// validateGroupCommands enforces the singular-vs-list contract:
+// command/params and commands: are mutually exclusive, the group must
+// declare at least one command, and string-form entries (shell command
+// lines / scripts) require shell: to be set. A nil Commands slice means the
+// key was absent; an empty non-nil slice means an explicit `commands: []`.
+func validateGroupCommands(i int, g *Group) error {
+	hasSingular := g.Command != "" || len(g.Params) > 0
+	switch {
+	case hasSingular && g.Commands != nil:
+		return fmt.Errorf("groups[%d] %q: set either 'command' or 'commands', not both", i, g.Name)
+	case g.Commands == nil && g.Command == "":
+		return fmt.Errorf("groups[%d] %q: missing command", i, g.Name)
+	case g.Commands != nil && len(g.Commands) == 0:
+		return fmt.Errorf("groups[%d] %q: 'commands' must list at least one entry", i, g.Name)
+	}
+	for j, cs := range g.Commands {
+		if cs.IsShell && !g.UseShell() {
+			return fmt.Errorf(
+				"groups[%d] %q: commands[%d] is a shell command line but 'shell' is not set",
+				i, g.Name, j+1,
+			)
+		}
 	}
 	return nil
 }

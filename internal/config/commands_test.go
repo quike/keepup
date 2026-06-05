@@ -288,3 +288,22 @@ flows:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not produced by an earlier step")
 }
+
+func TestLoadConfig_CommandsFixture(t *testing.T) {
+	cfg, err := LoadConfig("./test-resources/config-commands-valid.yml")
+	require.NoError(t, err)
+
+	multi := cfg.GroupByName("multi")
+	require.NotNil(t, multi)
+	list := multi.CommandList()
+	require.Len(t, list, 3)
+	assert.False(t, list[0].IsShell)
+	assert.True(t, list[1].IsShell)
+	assert.True(t, list[2].IsShell)
+
+	single := cfg.GroupByName("single")
+	require.NotNil(t, single)
+	assert.Equal(t,
+		[]CommandSpec{{Command: "echo", Params: []string{"single-step"}}},
+		single.CommandList())
+}

@@ -190,6 +190,25 @@ func TestEngine_MultiCommand_TemplatesExpandPerEntry(t *testing.T) {
 	assert.Equal(t, "use VAL", r.calls[2].command, "shell string expanded")
 }
 
+func TestEngine_CommandsFixture_EndToEnd(t *testing.T) {
+	skipOnWindows(t)
+
+	cfg, err := config.LoadConfig("../config/test-resources/config-commands-valid.yml")
+	require.NoError(t, err)
+
+	e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+	require.NoError(t, e.RunFlow(context.Background(), "ci"))
+
+	multi, ok := e.Outputs().Get("multi")
+	require.True(t, ok)
+	assert.Equal(t, "argv-step\nshell-step\nscript-line-1\nscript-line-2\n", multi.Output)
+	assert.Equal(t, 0, multi.ExitCode)
+
+	single, ok := e.Outputs().Get("single")
+	require.True(t, ok)
+	assert.Equal(t, "single-step\n", single.Output)
+}
+
 func TestEngine_MultiCommand_RealRunner(t *testing.T) {
 	skipOnWindows(t)
 

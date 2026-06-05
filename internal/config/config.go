@@ -186,6 +186,58 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 	return fmt.Errorf("run entry: must be a group name or a {group, when} map")
 }
 
+// CommandSpec is one entry in a group's commands: list. The YAML shape of the
+// entry selects its execution mode (same form-signals-mode rule as RunEntry):
+//   - a {command, params} mapping → safe argv exec, never a shell
+//   - a bare or multiline string  → a command line / script for the group's shell:
+type CommandSpec struct {
+	Command string   `yaml:"command" json:"command"`
+	Params  []string `yaml:"params,omitempty" json:"params,omitempty"`
+	// IsShell records that the entry was written in string form and therefore
+	// runs through the group's shell:. Argv-form entries always exec directly
+	// and ignore shell:, even when it is set.
+	IsShell bool `yaml:"-" json:"shell,omitempty"`
+}
+
+// UnmarshalYAML accepts a scalar (shell command line or script) or a
+// {command, params} mapping (safe argv exec). Any other shape, an empty
+// string, an empty command, or an unexpected key is a load error.
+func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if strings.TrimSpace(node.Value) == "" {
+			return fmt.Errorf("commands entry: must not be empty")
+		}
+		cs.Command = node.Value
+		cs.IsShell = true
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i].Value
+			val := node.Content[i+1]
+			switch key {
+			case "command":
+				if val.Kind != yaml.ScalarNode {
+					return fmt.Errorf(`commands entry: "command" must be a string`)
+				}
+				cs.Command = val.Value
+			case "params":
+				if err := val.Decode(&cs.Params); err != nil {
+					return fmt.Errorf(`commands entry: "params" must be a list of strings: %w`, err)
+				}
+			default:
+				return fmt.Errorf("commands entry: unexpected key %q (use a string or a {command, params} map)", key)
+			}
+		}
+		if cs.Command == "" {
+			return fmt.Errorf(`commands entry: missing or empty "command"`)
+		}
+		return nil
+	default:
+		return fmt.Errorf("commands entry: must be a string or a {command, params} map")
+	}
+}
+
 // NewConfig parses YAML bytes into a Config and validates the schema.
 func NewConfig(b []byte) (*Config, error) {
 	var cfg Config

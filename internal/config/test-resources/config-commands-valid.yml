@@ -1,0 +1,32 @@
+version: 2
+
+settings:
+  logging:
+    level: info
+
+groups:
+  # multi-command group — all three entry forms, mixed
+  - name: multi
+    description: "Mixed-form command sequence"
+    shell: sh
+    commands:
+      - { command: echo, params: [argv-step] }
+      - echo shell-step
+      - |
+        echo script-line-1
+        echo script-line-2
+
+  # single-command group — unchanged, still terse
+  - name: single
+    description: "Singular form stays first-class"
+    command: echo
+    params: [single-step]
+
+flows:
+  ci:
+    description: "Multi then single"
+    steps:
+      - run: [multi]
+      - run: [single]
+
+default: ci

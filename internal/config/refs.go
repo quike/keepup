@@ -6,10 +6,11 @@ import (
 	"github.com/quike/keepup/internal/template"
 )
 
-// ExtractRefs returns every group name referenced by a group's command or
-// params via the template output() function (or the legacy "{{ output.X }}"
-// form). Duplicates are preserved by position. An error is returned when any
-// template string is malformed, surfacing the problem at config-load time.
+// ExtractRefs returns every group name referenced by a group's commands via
+// the template output() function (or the legacy "{{ output.X }}" form),
+// across every entry in CommandList(). Duplicates are preserved by position.
+// An error is returned when any template string is malformed, surfacing the
+// problem at config-load time.
 func ExtractRefs(g *Group) ([]string, error) {
 	out := make([]string, 0)
 	collect := func(s string) error {
@@ -20,15 +21,27 @@ func ExtractRefs(g *Group) ([]string, error) {
 		out = append(out, refs...)
 		return nil
 	}
-	if err := collect(g.Command); err != nil {
-		return nil, err
-	}
-	for _, p := range g.Params {
-		if err := collect(p); err != nil {
+	for _, cs := range g.CommandList() {
+		if err := collect(cs.Command); err != nil {
 			return nil, err
+		}
+		for _, p := range cs.Params {
+			if err := collect(p); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return out, nil
+}
+
+// selfRefHint explains the intra-group limitation for multi-command groups: a
+// commands: entry cannot consume an earlier entry's output, which is the
+// usual intent behind a self-reference.
+func selfRefHint(g *Group) string {
+	if g == nil || len(g.CommandList()) <= 1 {
+		return ""
+	}
+	return " (commands in a group cannot consume each other's output; split into separate groups or pipe within a single shell entry)"
 }
 
 // ValidateReferences runs strict-mode reference checks on every flow:
@@ -79,6 +92,12 @@ func (c *Config) checkStepRefs(flowName string, f *Flow, memberSet map[string]st
 				return fmt.Errorf("flow %q step %d: %w", flowName, stepIdx+1, err)
 			}
 			for _, ref := range refs {
+				if ref == member {
+					return fmt.Errorf(
+						"flow %q step %d: group %q references its own output%s",
+						flowName, stepIdx+1, member, selfRefHint(g),
+					)
+				}
 				if _, ok := memberSet[ref]; !ok {
 					return fmt.Errorf(
 						"flow %q step %d: group %q references {{ output.%s }}, but %q is not part of this flow",
@@ -149,7 +168,8 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 			)
 		}
 		if ref == m {
-			return fmt.Errorf("flow %q: group %q references its own output", flowName, m)
+			return fmt.Errorf("flow %q: group %q references its own output%s",
+				flowName, m, selfRefHint(c.GroupByName(m)))
 		}
 		adj[ref] = append(adj[ref], m)
 		inDeg[m]++

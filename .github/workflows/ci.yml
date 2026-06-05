@@ -14,7 +14,7 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: quike/workflow-github/.github/workflows/release.yml@2840fd5aff5f259fa27b1c59fefb8c857a366c34 # v1
+    uses: quike/workflow-github/.github/workflows/release.yml@67a8249ae5ac0f37a1215036690893e83581fb1c # v1
     secrets: inherit
 
   build:

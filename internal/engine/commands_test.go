@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 
@@ -187,4 +188,68 @@ func TestEngine_MultiCommand_TemplatesExpandPerEntry(t *testing.T) {
 	require.Len(t, r.calls, 3)
 	assert.Equal(t, []string{"VAL"}, r.calls[1].params, "argv param expanded")
 	assert.Equal(t, "use VAL", r.calls[2].command, "shell string expanded")
+}
+
+func TestEngine_MultiCommand_RealRunner(t *testing.T) {
+	skipOnWindows(t)
+
+	run := func(t *testing.T, g config.Group) (result.RunResult, error) {
+		t.Helper()
+		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{g.Name}})
+		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+		err := e.RunFlow(context.Background(), "f")
+		out, _ := e.Outputs().Get(g.Name)
+		return out, err
+	}
+
+	t.Run("argv entry stays safe-exec even with shell set", func(t *testing.T) {
+		out, err := run(t, config.Group{Name: "g", Shell: "sh", Commands: []config.CommandSpec{
+			{Command: "echo", Params: []string{"$(whoami)", "*"}},
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, "$(whoami) *\n", out.Output, "no shell interpretation, no glob expansion")
+	})
+
+	t.Run("bare string runs through the declared shell", func(t *testing.T) {
+		out, err := run(t, config.Group{Name: "g", Shell: "sh", Commands: []config.CommandSpec{
+			{Command: "printf 'hi' | tr h H", IsShell: true},
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, "Hi", out.Output, "pipes prove shell interpretation")
+	})
+
+	t.Run("multiline script runs as one script", func(t *testing.T) {
+		out, err := run(t, config.Group{Name: "g", Shell: "sh", Commands: []config.CommandSpec{
+			{Command: "X=fromscript\necho $X\n", IsShell: true},
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, "fromscript\n", out.Output, "variable spans lines: one script, not line-by-line")
+	})
+
+	t.Run("mixed forms interleave in order", func(t *testing.T) {
+		out, err := run(t, config.Group{Name: "g", Shell: "sh", Commands: []config.CommandSpec{
+			{Command: "echo", Params: []string{"one"}},
+			{Command: "echo two", IsShell: true},
+			{Command: "echo", Params: []string{"three"}},
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, "one\ntwo\nthree\n", out.Output)
+	})
+
+	t.Run("first non-zero exit stops the sequence", func(t *testing.T) {
+		g := config.Group{Name: "g", Shell: "sh", Commands: []config.CommandSpec{
+			{Command: "echo", Params: []string{"ran"}},
+			{Command: "exit 3", IsShell: true},
+			{Command: "echo", Params: []string{"never"}},
+		}}
+		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{"g"}})
+		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+
+		out, err := e.runSequence(context.Background(), &g, g.CommandList())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "command 2 of 3")
+		assert.Equal(t, "ran\n", out.Output)
+		assert.Equal(t, 3, out.ExitCode, "exit code is the first failing command's")
+		assert.NotContains(t, out.Output, "never")
+	})
 }

@@ -33,10 +33,11 @@ type Store interface {
 
 // Compute returns a content fingerprint for the given cache spec. The
 // fingerprint changes when the method, any command/param/form in the group's
-// command list, or any matched input file changes. A glob that matches
+// command list, or any matched input file changes. For shell-form entries the
+// fingerprint also changes when the shell program changes. A glob that matches
 // nothing contributes nothing, so adding the first matching file naturally
 // changes the fingerprint.
-func Compute(spec *config.Cache, commands []config.CommandSpec) (string, error) {
+func Compute(spec *config.Cache, shell string, commands []config.CommandSpec) (string, error) {
 	h := sha256.New()
 	// Salt with the full command list and method so any changed command (or a
 	// form change: argv vs shell) busts the cache even when inputs are
@@ -47,6 +48,9 @@ func Compute(spec *config.Cache, commands []config.CommandSpec) (string, error) 
 	fmt.Fprintf(h, "v3\x00%s\x00", spec.Method)
 	for _, c := range commands {
 		fmt.Fprintf(h, "%s\x00%t\x00", c.Command, c.IsShell)
+		if c.IsShell {
+			fmt.Fprintf(h, "%s\x00", shell)
+		}
 		for _, p := range c.Params {
 			fmt.Fprintf(h, "%s\x01", p)
 		}

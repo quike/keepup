@@ -217,7 +217,6 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 
 	data := template.Data{Outputs: baseline, Env: e.cfg.Env}
 
-	g := *group
 	expanded, err := e.expandCommands(group, data)
 	if err != nil {
 		return err
@@ -226,50 +225,50 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	if e.dryRun {
 		for _, s := range expanded {
 			e.log.Info("[dry-run] would run",
-				"group", g.Name, "command", s.Command, "params", s.Params, "shell", s.IsShell)
+				"group", group.Name, "command", s.Command, "params", s.Params, "shell", s.IsShell)
 		}
-		e.outputs.Set(g.Name, result.RunResult{Status: result.StatusDryRun})
+		e.outputs.Set(group.Name, result.RunResult{Status: result.StatusDryRun})
 		status = StatusDryRun
 		return nil
 	}
 
-	if g.Require != "" {
-		if err = e.prober.Probe(ctx, g.Require, e.cfg.Env); err != nil {
-			return fmt.Errorf("group %q: requirement %q not met: %w", g.Name, g.Require, err)
+	if group.Require != "" {
+		if err = e.prober.Probe(ctx, group.Require, e.cfg.Env); err != nil {
+			return fmt.Errorf("group %q: requirement %q not met: %w", group.Name, group.Require, err)
 		}
 	}
 
-	if g.SkipIf != "" {
-		if err = e.prober.Probe(ctx, g.SkipIf, e.cfg.Env); err == nil {
-			e.outputs.Set(g.Name, result.RunResult{Status: result.StatusSkipped})
-			e.log.Info("group skipped", "group", g.Name, "reason", "skip-if", "predicate", g.SkipIf)
+	if group.SkipIf != "" {
+		if err = e.prober.Probe(ctx, group.SkipIf, e.cfg.Env); err == nil {
+			e.outputs.Set(group.Name, result.RunResult{Status: result.StatusSkipped})
+			e.log.Info("group skipped", "group", group.Name, "reason", "skip-if", "predicate", group.SkipIf)
 			status = StatusSkipped
 			return nil
 		}
 	}
 
-	if fp, hit := e.cacheLookup(&g, expanded); hit {
+	if fp, hit := e.cacheLookup(group, expanded); hit {
 		cached := fp.Result
 		cached.Status = result.StatusCached
-		e.outputs.Set(g.Name, cached)
-		e.log.Info("cache hit", "group", g.Name, "fingerprint", fp.Fingerprint)
+		e.outputs.Set(group.Name, cached)
+		e.log.Info("cache hit", "group", group.Name, "fingerprint", fp.Fingerprint)
 		status = StatusCacheHit
 		return nil
 	}
 
 	for _, s := range expanded {
-		e.log.Info("running group", "group", g.Name, "command", s.Command, "params", s.Params)
+		e.log.Info("running group", "group", group.Name, "command", s.Command, "params", s.Params)
 	}
-	out, err := e.execWithEnvelope(ctx, &g, expanded, env)
+	out, err := e.execWithEnvelope(ctx, group, expanded, env)
 	if err != nil {
-		e.log.Error("group failed", "group", g.Name, "err", err.Error(), "output", out.Output)
+		e.log.Error("group failed", "group", group.Name, "err", err.Error(), "output", out.Output)
 		return err
 	}
-	e.log.Trace("group output", "group", g.Name, "output", out.Output)
+	e.log.Trace("group output", "group", group.Name, "output", out.Output)
 	// Runner sets Status to result.StatusOK on success; trust it so a future
 	// soft-fail Runner can return Status:"failed" without engine clobbering.
-	e.outputs.Set(g.Name, out)
-	e.cacheStore(&g, expanded, &out)
+	e.outputs.Set(group.Name, out)
+	e.cacheStore(group, expanded, &out)
 	return nil
 }
 
@@ -313,9 +312,9 @@ func (e *Engine) execWithEnvelope(
 // stopping at the first failure (like set -e). The returned RunResult
 // aggregates the whole sequence: concatenated streams, summed duration, the
 // exit code of the first failing command (0 when all succeed), and the last
-// runner-reported status. Each command goes to the runner as a copy of the
-// group carrying that command; argv-form entries clear Shell so they always
-// safe-exec, string-form entries keep the group's shell.
+// runner-reported status. Each command goes to the runner as a self-contained
+// copy of the group with exactly one command set; argv-form entries clear
+// Shell so they always safe-exec, string-form entries keep the group's shell.
 func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands []config.CommandSpec) (result.RunResult, error) {
 	var agg result.RunResult
 	for i, s := range commands {
@@ -324,6 +323,8 @@ func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands 
 		}
 		sg := *group
 		sg.Command = s.Command
+		sg.Params = s.Params
+		sg.Commands = nil // the copy presents exactly one command
 		if !s.IsShell {
 			sg.Shell = "" // {command, params} entries are always safe argv exec
 		}
@@ -354,7 +355,7 @@ func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec)
 	if e.noCache || group.Cache == nil {
 		return nil, false
 	}
-	fp, err := cache.Compute(group.Cache, commands)
+	fp, err := cache.Compute(group.Cache, group.Shell, commands)
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; running group", "group", group.Name, "err", err.Error())
 		return nil, false
@@ -374,7 +375,11 @@ func (e *Engine) cacheStore(group *config.Group, commands []config.CommandSpec, 
 	if e.noCache || group.Cache == nil {
 		return
 	}
-	fp, err := cache.Compute(group.Cache, commands)
+	// Recompute rather than reuse cacheLookup's fingerprint: the command may
+	// have rewritten its own cache.reads inputs (e.g. a formatter), and the
+	// stored fingerprint must reflect the post-run input state so the next
+	// run can hit.
+	fp, err := cache.Compute(group.Cache, group.Shell, commands)
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; not caching", "group", group.Name, "err", err.Error())
 		return

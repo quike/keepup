@@ -26,44 +26,44 @@ func TestCompute_HashMethod(t *testing.T) {
 	writeFile(t, a, "package main\n")
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "*.go")}}
 
-	fp1, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+	fp1, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 	require.NoError(t, err)
 	assert.True(t, len(fp1) > 7 && fp1[:7] == "sha256:")
 
 	t.Run("stable when nothing changes", func(t *testing.T) {
-		fp2, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		fp2, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
 		assert.Equal(t, fp1, fp2)
 	})
 
 	t.Run("changes when content changes", func(t *testing.T) {
 		writeFile(t, a, "package main // changed\n")
-		fp2, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		fp2, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
 		assert.NotEqual(t, fp1, fp2)
 	})
 
 	t.Run("changes when command changes", func(t *testing.T) {
-		fpCmd, err := Compute(spec, []config.CommandSpec{{Command: "gofmt", Params: []string{"build"}}})
+		fpCmd, err := Compute(spec, "", []config.CommandSpec{{Command: "gofmt", Params: []string{"build"}}})
 		require.NoError(t, err)
-		fpCmd2, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		fpCmd2, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
 		assert.NotEqual(t, fpCmd, fpCmd2)
 	})
 
 	t.Run("changes when params change", func(t *testing.T) {
-		fpA, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		fpA, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
-		fpB, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"test"}}})
+		fpB, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"test"}}})
 		require.NoError(t, err)
 		assert.NotEqual(t, fpA, fpB)
 	})
 
 	t.Run("changes when a new matching file appears", func(t *testing.T) {
-		before, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		before, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
 		writeFile(t, filepath.Join(dir, "b.go"), "package main\n")
-		after, err := Compute(spec, []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
+		after, err := Compute(spec, "", []config.CommandSpec{{Command: "go", Params: []string{"build"}}})
 		require.NoError(t, err)
 		assert.NotEqual(t, before, after)
 	})
@@ -75,13 +75,13 @@ func TestCompute_MtimeMethod(t *testing.T) {
 	writeFile(t, f, "hello")
 	spec := &config.Cache{Method: config.CacheMtime, Reads: []string{f}}
 
-	fp1, err := Compute(spec, []config.CommandSpec{{Command: "cat"}})
+	fp1, err := Compute(spec, "", []config.CommandSpec{{Command: "cat"}})
 	require.NoError(t, err)
 
 	// Bumping mtime changes the fingerprint even if content is identical.
 	future := time.Now().Add(2 * time.Second)
 	require.NoError(t, os.Chtimes(f, future, future))
-	fp2, err := Compute(spec, []config.CommandSpec{{Command: "cat"}})
+	fp2, err := Compute(spec, "", []config.CommandSpec{{Command: "cat"}})
 	require.NoError(t, err)
 	assert.NotEqual(t, fp1, fp2)
 }
@@ -90,7 +90,7 @@ func TestCompute_DoublestarRecursive(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "pkg", "deep", "x.go"), "package deep\n")
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "**", "*.go")}}
-	fp, err := Compute(spec, []config.CommandSpec{{Command: "go"}})
+	fp, err := Compute(spec, "", []config.CommandSpec{{Command: "go"}})
 	require.NoError(t, err)
 	assert.Contains(t, fp, "sha256:")
 }
@@ -99,7 +99,7 @@ func TestCompute_MissingExplicitFileErrors(t *testing.T) {
 	// A literal (non-glob) path that doesn't exist should surface an error,
 	// since the user named a specific input.
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{"/no/such/explicit/file.go"}}
-	_, err := Compute(spec, []config.CommandSpec{{Command: "go"}})
+	_, err := Compute(spec, "", []config.CommandSpec{{Command: "go"}})
 	// doublestar treats a literal path as a pattern matching nothing, so this
 	// resolves to zero files and succeeds; assert the no-op behavior.
 	require.NoError(t, err)
@@ -111,14 +111,14 @@ func TestCompute_DirectoryInput(t *testing.T) {
 	sub := filepath.Join(dir, "sub")
 	require.NoError(t, os.MkdirAll(sub, 0o755))
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "*")}}
-	fp, err := Compute(spec, []config.CommandSpec{{Command: "go"}})
+	fp, err := Compute(spec, "", []config.CommandSpec{{Command: "go"}})
 	require.NoError(t, err)
 	assert.Contains(t, fp, "sha256:")
 }
 
 func TestCompute_BadGlobErrors(t *testing.T) {
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{"[invalid"}}
-	_, err := Compute(spec, []config.CommandSpec{{Command: "go"}})
+	_, err := Compute(spec, "", []config.CommandSpec{{Command: "go"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad glob")
 }
@@ -228,12 +228,12 @@ func TestComputeUsesV3Salt(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o600))
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "f.txt")}}
-	fp, err := Compute(spec, []config.CommandSpec{{Command: "echo", Params: []string{"a"}}})
+	fp, err := Compute(spec, "", []config.CommandSpec{{Command: "echo", Params: []string{"a"}}})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(fp, "sha256:"))
 
 	// Determinism: identical inputs produce identical fingerprints.
-	fp2, err := Compute(spec, []config.CommandSpec{{Command: "echo", Params: []string{"a"}}})
+	fp2, err := Compute(spec, "", []config.CommandSpec{{Command: "echo", Params: []string{"a"}}})
 	require.NoError(t, err)
 	assert.Equal(t, fp, fp2)
 }
@@ -245,11 +245,11 @@ func TestCompute_CommandListFingerprint(t *testing.T) {
 		{Command: "go test ./...", IsShell: true},
 	}
 
-	fp1, err := Compute(spec, base)
+	fp1, err := Compute(spec, "sh", base)
 	require.NoError(t, err)
 
 	t.Run("identical lists hit", func(t *testing.T) {
-		fp2, err := Compute(spec, []config.CommandSpec{
+		fp2, err := Compute(spec, "sh", []config.CommandSpec{
 			{Command: "go", Params: []string{"build"}},
 			{Command: "go test ./...", IsShell: true},
 		})
@@ -258,7 +258,7 @@ func TestCompute_CommandListFingerprint(t *testing.T) {
 	})
 
 	t.Run("changing any command busts", func(t *testing.T) {
-		fp2, err := Compute(spec, []config.CommandSpec{
+		fp2, err := Compute(spec, "sh", []config.CommandSpec{
 			{Command: "go", Params: []string{"build"}},
 			{Command: "go vet ./...", IsShell: true}, // second entry changed
 		})
@@ -267,7 +267,7 @@ func TestCompute_CommandListFingerprint(t *testing.T) {
 	})
 
 	t.Run("changing a param busts", func(t *testing.T) {
-		fp2, err := Compute(spec, []config.CommandSpec{
+		fp2, err := Compute(spec, "sh", []config.CommandSpec{
 			{Command: "go", Params: []string{"install"}},
 			{Command: "go test ./...", IsShell: true},
 		})
@@ -276,7 +276,7 @@ func TestCompute_CommandListFingerprint(t *testing.T) {
 	})
 
 	t.Run("changing entry form (argv vs shell) busts", func(t *testing.T) {
-		fp2, err := Compute(spec, []config.CommandSpec{
+		fp2, err := Compute(spec, "sh", []config.CommandSpec{
 			{Command: "go", Params: []string{"build"}},
 			{Command: "go test ./...", IsShell: false}, // same text, argv form
 		})
@@ -285,8 +285,30 @@ func TestCompute_CommandListFingerprint(t *testing.T) {
 	})
 
 	t.Run("adding an entry busts", func(t *testing.T) {
-		fp2, err := Compute(spec, append(base, config.CommandSpec{Command: "true"}))
+		fp2, err := Compute(spec, "sh", append(base, config.CommandSpec{Command: "true"}))
 		require.NoError(t, err)
 		assert.NotEqual(t, fp1, fp2)
+	})
+
+	t.Run("changing the shell busts shell-form entries", func(t *testing.T) {
+		list := []config.CommandSpec{
+			{Command: "go test ./...", IsShell: true},
+		}
+		fpBash, err := Compute(spec, "bash", list)
+		require.NoError(t, err)
+		fpZsh, err := Compute(spec, "zsh", list)
+		require.NoError(t, err)
+		assert.NotEqual(t, fpBash, fpZsh)
+	})
+
+	t.Run("changing the shell does not bust argv-only lists", func(t *testing.T) {
+		list := []config.CommandSpec{
+			{Command: "go", Params: []string{"build"}},
+		}
+		fpBash, err := Compute(spec, "bash", list)
+		require.NoError(t, err)
+		fpZsh, err := Compute(spec, "zsh", list)
+		require.NoError(t, err)
+		assert.Equal(t, fpBash, fpZsh)
 	})
 }

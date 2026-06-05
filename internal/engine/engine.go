@@ -297,7 +297,8 @@ func (e *Engine) cacheLookup(group *config.Group, params []string) (*cache.Entry
 	if e.noCache || group.Cache == nil {
 		return nil, false
 	}
-	fp, err := cache.Compute(group.Cache, group.Command, params)
+	fp, err := cache.Compute(group.Cache,
+		[]config.CommandSpec{{Command: group.Command, Params: params, IsShell: group.UseShell()}})
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; running group", "group", group.Name, "err", err.Error())
 		return nil, false
@@ -317,7 +318,8 @@ func (e *Engine) cacheStore(group *config.Group, params []string, out *result.Ru
 	if e.noCache || group.Cache == nil {
 		return
 	}
-	fp, err := cache.Compute(group.Cache, group.Command, params)
+	fp, err := cache.Compute(group.Cache,
+		[]config.CommandSpec{{Command: group.Command, Params: params, IsShell: group.UseShell()}})
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; not caching", "group", group.Name, "err", err.Error())
 		return
@@ -325,8 +327,7 @@ func (e *Engine) cacheStore(group *config.Group, params []string, out *result.Ru
 	entry := &cache.Entry{
 		Fingerprint: fp,
 		Result:      *out,
-		Command:     group.Command,
-		Params:      params,
+		Commands:    []config.CommandSpec{{Command: group.Command, Params: params, IsShell: group.UseShell()}},
 		UpdatedAt:   time.Now(),
 	}
 	if err := e.cache.Save(group.Name, entry); err != nil {

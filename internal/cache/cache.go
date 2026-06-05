@@ -19,10 +19,13 @@ import (
 
 // Entry is a persisted cache record for one group.
 type Entry struct {
-	Fingerprint string               `json:"fingerprint"`
-	Result      result.RunResult     `json:"result"`
-	Commands    []config.CommandSpec `json:"commands"`
-	UpdatedAt   time.Time            `json:"updatedAt"`
+	Fingerprint string           `json:"fingerprint"`
+	Result      result.RunResult `json:"result"`
+	// Commands records the expanded (post-template) command list that produced
+	// Result — resolved values, not the config's template text. This field is
+	// informational only: the Fingerprint (not Commands) decides cache hits.
+	Commands  []config.CommandSpec `json:"commands"`
+	UpdatedAt time.Time            `json:"updatedAt"`
 }
 
 // Store loads and saves cache entries keyed by group name.

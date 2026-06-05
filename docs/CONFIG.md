@@ -159,6 +159,9 @@ caching, gating, and output:
   the cache
 - `require`/`skip-if` gate the whole sequence, and templating expands each
   entry's command/params individually
+- `retries:` replays the **whole sequence** from the first command on each
+  attempt, and `timeout:` covers the whole sequence per attempt — keep
+  multi-command groups idempotent when combining them with retries
 
 Entries in a `commands:` list cannot reference each other's output: the group
 publishes a single combined output only after the whole sequence finishes, and

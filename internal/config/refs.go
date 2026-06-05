@@ -6,10 +6,11 @@ import (
 	"github.com/quike/keepup/internal/template"
 )
 
-// ExtractRefs returns every group name referenced by a group's command or
-// params via the template output() function (or the legacy "{{ output.X }}"
-// form). Duplicates are preserved by position. An error is returned when any
-// template string is malformed, surfacing the problem at config-load time.
+// ExtractRefs returns every group name referenced by a group's commands via
+// the template output() function (or the legacy "{{ output.X }}" form),
+// across every entry in CommandList(). Duplicates are preserved by position.
+// An error is returned when any template string is malformed, surfacing the
+// problem at config-load time.
 func ExtractRefs(g *Group) ([]string, error) {
 	out := make([]string, 0)
 	collect := func(s string) error {
@@ -20,12 +21,14 @@ func ExtractRefs(g *Group) ([]string, error) {
 		out = append(out, refs...)
 		return nil
 	}
-	if err := collect(g.Command); err != nil {
-		return nil, err
-	}
-	for _, p := range g.Params {
-		if err := collect(p); err != nil {
+	for _, cs := range g.CommandList() {
+		if err := collect(cs.Command); err != nil {
 			return nil, err
+		}
+		for _, p := range cs.Params {
+			if err := collect(p); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return out, nil

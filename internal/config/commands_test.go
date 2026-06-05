@@ -257,3 +257,34 @@ flows:
 		})
 	}
 }
+
+func TestExtractRefs_CommandsEntries(t *testing.T) {
+	g := &Group{Name: "g", Shell: "sh", Commands: []CommandSpec{
+		{Command: "echo", Params: []string{`{{ output "a" }}`}},
+		{Command: `echo {{ output "b" }}`, IsShell: true},
+	}}
+	refs, err := ExtractRefs(g)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, refs)
+}
+
+func TestValidateReferences_CommandsEntryForwardRef(t *testing.T) {
+	yml := `
+version: 2
+groups:
+  - name: first
+    shell: sh
+    commands:
+      - echo {{ output "second" }}
+  - name: second
+    command: echo
+flows:
+  f:
+    steps:
+      - run: [first]
+      - run: [second]
+`
+	_, err := NewConfig([]byte(yml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not produced by an earlier step")
+}

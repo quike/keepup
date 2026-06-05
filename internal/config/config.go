@@ -76,9 +76,16 @@ type Settings struct {
 // Group is an atomic, reusable command unit. Groups know nothing about flows;
 // composition lives in Flow.
 //
-// Shell controls how the command is launched:
+// A group runs either a single command (Command + Params) or an ordered
+// Commands list; the two are mutually exclusive and both normalize to
+// CommandList() so the engine has a single execution path.
+//
+// Shell controls how string-form commands are launched:
 //   - empty: exec directly with Params as argv (safe; no shell interpretation)
-//   - non-empty: pipe `command + params` through the named shell program (opt-in).
+//   - non-empty: pipe the command line through the named shell program (opt-in).
+//
+// In a Commands list, {command, params} entries are always safe argv exec and
+// ignore Shell; string entries require Shell to be set.
 //
 // Gating (Require, SkipIf) and Cache are optional short-circuits evaluated
 // before the command runs; see the engine for ordering semantics.
@@ -86,6 +93,7 @@ type Group struct {
 	Name        string            `yaml:"name"`
 	Command     string            `yaml:"command"`
 	Params      []string          `yaml:"params,omitempty"`
+	Commands    []CommandSpec     `yaml:"commands,omitempty"`
 	Shell       string            `yaml:"shell,omitempty"`
 	Description string            `yaml:"description,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
@@ -104,6 +112,20 @@ type Cache struct {
 
 // UseShell reports whether the group opted into shell mode.
 func (g *Group) UseShell() bool { return g.Shell != "" }
+
+// CommandList returns the group's commands as a normalized list. When
+// commands: is set it is returned as-is; otherwise the singular
+// command/params pair becomes a one-element list whose shell-ness mirrors
+// UseShell(). The engine, cache, and reference extraction all consume this
+// accessor so singular and multi groups share a single execution path.
+// The returned slice aliases the group's backing array and is intended for
+// read-only use; callers must not modify it.
+func (g *Group) CommandList() []CommandSpec {
+	if len(g.Commands) > 0 {
+		return g.Commands
+	}
+	return []CommandSpec{{Command: g.Command, Params: g.Params, IsShell: g.UseShell()}}
+}
 
 // Flow is a named pipeline composed of groups.
 //
@@ -186,6 +208,62 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 	return fmt.Errorf("run entry: must be a group name or a {group, when} map")
 }
 
+// CommandSpec is one entry in a group's commands: list. The YAML shape of the
+// entry selects its execution mode (same form-signals-mode rule as RunEntry):
+//   - a {command, params} mapping → safe argv exec, never a shell
+//   - a bare or multiline string  → a command line / script for the group's shell:
+type CommandSpec struct {
+	Command string   `yaml:"command" json:"command"`
+	Params  []string `yaml:"params,omitempty" json:"params,omitempty"`
+	// IsShell records that the entry was written in string form and therefore
+	// runs through the group's shell:. Argv-form entries always exec directly
+	// and ignore shell:, even when it is set.
+	IsShell bool `yaml:"-" json:"shell,omitempty"`
+}
+
+// UnmarshalYAML accepts a scalar (shell command line or script) or a
+// {command, params} mapping (safe argv exec). Any other shape, an empty
+// string, an empty command, or an unexpected key is a load error.
+func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		// Deliberately rejects whitespace-only strings (stricter than RunEntry's
+		// empty-only check) because a blank shell line is useless and likely a
+		// YAML indentation mistake.
+		if strings.TrimSpace(node.Value) == "" {
+			return fmt.Errorf("commands entry: must not be empty")
+		}
+		cs.Command = node.Value
+		cs.IsShell = true
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i].Value
+			val := node.Content[i+1]
+			switch key {
+			case "command":
+				if val.Kind != yaml.ScalarNode {
+					return fmt.Errorf(`commands entry: "command" must be a string`)
+				}
+				cs.Command = val.Value
+			case "params":
+				if err := val.Decode(&cs.Params); err != nil {
+					return fmt.Errorf(`commands entry: "params" must be a list of strings: %w`, err)
+				}
+			default:
+				return fmt.Errorf("commands entry: unexpected key %q (use a string or a {command, params} map)", key)
+			}
+		}
+		if cs.Command == "" {
+			return fmt.Errorf(`commands entry: missing or empty "command"`)
+		}
+		return nil
+	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+		return fmt.Errorf("commands entry: must be a string or a {command, params} map")
+	}
+	return fmt.Errorf("commands entry: must be a string or a {command, params} map")
+}
+
 // NewConfig parses YAML bytes into a Config and validates the schema.
 func NewConfig(b []byte) (*Config, error) {
 	var cfg Config
@@ -258,8 +336,8 @@ func (c *Config) indexGroups() (map[string]*Group, error) {
 		if g.Name == "" {
 			return nil, fmt.Errorf("groups[%d]: missing name", i)
 		}
-		if g.Command == "" {
-			return nil, fmt.Errorf("groups[%d] %q: missing command", i, g.Name)
+		if err := validateGroupCommands(i, g); err != nil {
+			return nil, err
 		}
 		if _, dup := out[g.Name]; dup {
 			return nil, fmt.Errorf("groups: duplicate name %q", g.Name)
@@ -287,6 +365,32 @@ func validateCache(g *Group) error {
 		// ok
 	default:
 		return fmt.Errorf("group %q: unknown cache.method %q (use 'hash' or 'mtime')", g.Name, g.Cache.Method)
+	}
+	return nil
+}
+
+// validateGroupCommands enforces the singular-vs-list contract:
+// command/params and commands: are mutually exclusive, the group must
+// declare at least one command, and string-form entries (shell command
+// lines / scripts) require shell: to be set. A nil Commands slice means the
+// key was absent; an empty non-nil slice means an explicit `commands: []`.
+func validateGroupCommands(i int, g *Group) error {
+	hasSingular := g.Command != "" || len(g.Params) > 0
+	switch {
+	case hasSingular && g.Commands != nil:
+		return fmt.Errorf("groups[%d] %q: set either 'command' or 'commands', not both", i, g.Name)
+	case g.Commands == nil && g.Command == "":
+		return fmt.Errorf("groups[%d] %q: missing command", i, g.Name)
+	case g.Commands != nil && len(g.Commands) == 0:
+		return fmt.Errorf("groups[%d] %q: 'commands' must list at least one entry", i, g.Name)
+	}
+	for j, cs := range g.Commands {
+		if cs.IsShell && !g.UseShell() {
+			return fmt.Errorf(
+				"groups[%d] %q: commands[%d] is a shell command line but 'shell' is not set",
+				i, g.Name, j+1,
+			)
+		}
 	}
 	return nil
 }

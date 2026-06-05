@@ -21,9 +21,11 @@ import (
 type Entry struct {
 	Fingerprint string           `json:"fingerprint"`
 	Result      result.RunResult `json:"result"`
-	Command     string           `json:"command"`
-	Params      []string         `json:"params"`
-	UpdatedAt   time.Time        `json:"updatedAt"`
+	// Commands records the expanded (post-template) command list that produced
+	// Result — resolved values, not the config's template text. This field is
+	// informational only: the Fingerprint (not Commands) decides cache hits.
+	Commands  []config.CommandSpec `json:"commands"`
+	UpdatedAt time.Time            `json:"updatedAt"`
 }
 
 // Store loads and saves cache entries keyed by group name.
@@ -33,16 +35,29 @@ type Store interface {
 }
 
 // Compute returns a content fingerprint for the given cache spec. The
-// fingerprint changes when the method, command, params, or any matched
-// input file changes. A glob that matches nothing contributes nothing,
-// so adding the first matching file naturally changes the fingerprint.
-func Compute(spec *config.Cache, command string, params []string) (string, error) {
+// fingerprint changes when the method, any command/param/form in the group's
+// command list, or any matched input file changes. For shell-form entries the
+// fingerprint also changes when the shell program changes. A glob that matches
+// nothing contributes nothing, so adding the first matching file naturally
+// changes the fingerprint.
+func Compute(spec *config.Cache, shell string, commands []config.CommandSpec) (string, error) {
 	h := sha256.New()
-	// Salt with command/params/method so a changed command busts the cache
-	// even when inputs are identical.
-	fmt.Fprintf(h, "v2\x00%s\x00%s\x00", spec.Method, command)
-	for _, p := range params {
-		fmt.Fprintf(h, "%s\x01", p)
+	// Salt with the full command list and method so any changed command (or a
+	// form change: argv vs shell) busts the cache even when inputs are
+	// identical. v3 marks the multi-command fingerprint format.
+	// The \x00/\x01/\x02 sentinel encoding assumes config values are free of
+	// these control bytes (user's own config; a collision only mis-caches their
+	// own group).
+	fmt.Fprintf(h, "v3\x00%s\x00", spec.Method)
+	for _, c := range commands {
+		fmt.Fprintf(h, "%s\x00%t\x00", c.Command, c.IsShell)
+		if c.IsShell {
+			fmt.Fprintf(h, "%s\x00", shell)
+		}
+		for _, p := range c.Params {
+			fmt.Fprintf(h, "%s\x01", p)
+		}
+		fmt.Fprintf(h, "\x02")
 	}
 
 	files, err := resolveGlobs(spec.Reads)

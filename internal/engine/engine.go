@@ -333,7 +333,12 @@ func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands 
 		agg.Stderr += out.Stderr
 		agg.Output += out.Output
 		agg.DurationMs += out.DurationMs
-		agg.Status = out.Status
+		// First non-ok status wins (mirroring ExitCode): a soft-fail Runner's
+		// Status:"failed" must survive later successful commands, per the
+		// trust-the-runner contract in runGroup.
+		if agg.Status == "" || agg.Status == result.StatusOK {
+			agg.Status = out.Status
+		}
 		if agg.ExitCode == 0 {
 			agg.ExitCode = out.ExitCode
 		}

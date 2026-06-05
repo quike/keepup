@@ -190,6 +190,44 @@ func TestEngine_MultiCommand_TemplatesExpandPerEntry(t *testing.T) {
 	assert.Equal(t, "use VAL", r.calls[2].command, "shell string expanded")
 }
 
+// softFailRunner returns (RunResult{Status:"failed", ExitCode:2}, nil) for the
+// first command and (RunResult{Status:StatusOK}, nil) for every subsequent
+// call. It is intentionally separate from specRunner so we can test the sticky
+// status contract without modifying that helper.
+type softFailRunner struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *softFailRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls == 1 {
+		return result.RunResult{Status: "failed", ExitCode: 2, DurationMs: 1}, nil
+	}
+	return result.RunResult{Status: result.StatusOK, DurationMs: 1}, nil
+}
+
+func TestRunSequence_StickyNonOKStatus(t *testing.T) {
+	g := config.Group{
+		Name: "sticky",
+		Commands: []config.CommandSpec{
+			{Command: "bad"},
+			{Command: "good"},
+		},
+	}
+	cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{"sticky"}})
+	r := &softFailRunner{}
+	e := New(cfg, WithRunner(r))
+
+	specs := g.CommandList()
+	out, err := e.runSequence(context.Background(), &g, specs)
+	require.NoError(t, err, "nil error: sequence continues when runner returns nil error")
+	assert.Equal(t, "failed", out.Status, "first non-ok status must survive a later ok command")
+	assert.Equal(t, 2, out.ExitCode, "exit code of first failing command is preserved")
+}
+
 func TestEngine_CommandsFixture_EndToEnd(t *testing.T) {
 	skipOnWindows(t)
 

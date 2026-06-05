@@ -247,6 +247,41 @@ func TestEngine_CommandsFixture_EndToEnd(t *testing.T) {
 	assert.Equal(t, "single-step\n", single.Output)
 }
 
+func TestEngine_ErrorDecoration_SingularVsMulti(t *testing.T) {
+	t.Run("singular group error is not decorated", func(t *testing.T) {
+		g := config.Group{Name: "solo", Command: "boom"}
+		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{"solo"}})
+		r := &specRunner{errs: map[string]error{"boom": assert.AnError}}
+		e := New(cfg, WithRunner(r))
+
+		err := e.RunFlow(context.Background(), "f")
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "command 1 of 1",
+			"singular group must not get sequence decoration")
+		assert.Contains(t, err.Error(), assert.AnError.Error(),
+			"underlying error text must be preserved")
+	})
+
+	t.Run("multi-command group failure is decorated with position", func(t *testing.T) {
+		g := config.Group{
+			Name: "multi3",
+			Commands: []config.CommandSpec{
+				{Command: "first"},
+				{Command: "boom"},
+				{Command: "third"},
+			},
+		}
+		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{"multi3"}})
+		r := &specRunner{errs: map[string]error{"boom": assert.AnError}}
+		e := New(cfg, WithRunner(r))
+
+		err := e.RunFlow(context.Background(), "f")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "command 2 of 3",
+			"multi-command failure must point into the sequence")
+	})
+}
+
 func TestEngine_MultiCommand_RealRunner(t *testing.T) {
 	skipOnWindows(t)
 

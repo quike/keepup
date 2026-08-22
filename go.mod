@@ -2,7 +2,7 @@ module github.com/quike/keepup
 
 go 1.25.0
 
-toolchain go1.26.5
+toolchain go1.27.0
 
 require (
 	github.com/Masterminds/sprig/v3 v3.3.0
@@ -10,8 +10,8 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
-	go.yaml.in/yaml/v3 v3.0.4
+	github.com/stretchr/testify v1.12.1
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sync v0.22.0
 )
 

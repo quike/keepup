@@ -220,6 +220,10 @@ type CommandSpec struct {
 	Env    map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	Dir    string            `yaml:"dir,omitempty" json:"dir,omitempty"`
 	Silent bool              `yaml:"silent,omitempty" json:"silent,omitempty"`
+	// Independent and composable: Always guarantees execution, ContinueOnError
+	// forgives the outcome.
+	ContinueOnError bool `yaml:"continue-on-error,omitempty" json:"continueOnError,omitempty"`
+	Always          bool `yaml:"always,omitempty" json:"always,omitempty"`
 	// IsShell records that the entry was written in string form and therefore
 	// runs through the group's shell:. Argv-form entries always exec directly
 	// and ignore shell:, even when it is set.
@@ -288,11 +292,20 @@ func (cs *CommandSpec) unmarshalKey(key string, val *yaml.Node) error {
 		}
 		cs.Dir = val.Value
 	case "silent":
-		if err := val.Decode(&cs.Silent); err != nil {
-			return fmt.Errorf(`commands entry: "silent" must be a boolean: %w`, err)
-		}
+		return decodeBool(val, key, &cs.Silent)
+	case "continue-on-error":
+		return decodeBool(val, key, &cs.ContinueOnError)
+	case "always":
+		return decodeBool(val, key, &cs.Always)
 	default:
 		return fmt.Errorf("commands entry: unexpected key %q (use a string or a {command, params} map)", key)
+	}
+	return nil
+}
+
+func decodeBool(val *yaml.Node, key string, dst *bool) error {
+	if err := val.Decode(dst); err != nil {
+		return fmt.Errorf("commands entry: %q must be a boolean: %w", key, err)
 	}
 	return nil
 }

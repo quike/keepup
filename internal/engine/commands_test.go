@@ -245,6 +245,14 @@ func TestEngine_CommandsFixture_EndToEnd(t *testing.T) {
 	single, ok := e.Outputs().Get("single")
 	require.True(t, ok)
 	assert.Equal(t, "single-step\n", single.Output)
+
+	// Two entries exit non-zero; both are tolerated, so the group succeeds and
+	// publishes only the surviving commands' output.
+	policy, ok := e.Outputs().Get("policy")
+	require.True(t, ok)
+	assert.Equal(t, "work\nteardown\n", policy.Output)
+	assert.Equal(t, 0, policy.ExitCode)
+	assert.Equal(t, result.StatusOK, policy.Status)
 }
 
 func TestEngine_ErrorDecoration_SingularVsMulti(t *testing.T) {

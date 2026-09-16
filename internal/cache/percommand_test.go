@@ -48,6 +48,21 @@ func TestCompute_PerCommandKnobs(t *testing.T) {
 			wantBust: false,
 		},
 		{
+			name:     "continue-on-error busts",
+			spec:     config.CommandSpec{Command: "go", Params: []string{"build"}, ContinueOnError: true},
+			wantBust: true,
+		},
+		{
+			name:     "always busts",
+			spec:     config.CommandSpec{Command: "go", Params: []string{"build"}, Always: true},
+			wantBust: true,
+		},
+		{
+			name:     "the two policy keys are distinguishable",
+			spec:     config.CommandSpec{Command: "go", Params: []string{"build"}, Always: true, ContinueOnError: true},
+			wantBust: true,
+		},
+		{
 			name:     "empty env map is the same as no env",
 			spec:     config.CommandSpec{Command: "go", Params: []string{"build"}, Env: map[string]string{}},
 			wantBust: false,
@@ -80,6 +95,14 @@ func TestCompute_EnvOrderIsDeterministic(t *testing.T) {
 	for range 20 {
 		assert.Equal(t, want, fpFor(t, dir, spec))
 	}
+}
+
+func TestCompute_PolicyKeysAreDistinct(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.go"), "package main\n")
+	soft := config.CommandSpec{Command: "go", ContinueOnError: true}
+	always := config.CommandSpec{Command: "go", Always: true}
+	assert.NotEqual(t, fpFor(t, dir, soft), fpFor(t, dir, always))
 }
 
 // Two different env maps must not hash the same just because their

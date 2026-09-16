@@ -339,30 +339,42 @@ func (e *Engine) execWithEnvelope(
 }
 
 // runSequence executes the group's expanded commands in declared order,
-// stopping at the first failure (like set -e). The returned RunResult
-// aggregates the whole sequence: concatenated streams, summed duration, the
-// exit code of the first failing command (0 when all succeed), and the last
-// runner-reported status. Each command goes to the runner as a self-contained
-// copy of the group with exactly one command set; argv-form entries clear
-// Shell so they always safe-exec, string-form entries keep the group's shell.
+// stopping at the first failure (like set -e). Two per-entry knobs bend that:
+// always runs an entry even after an earlier failure, and continue-on-error
+// tolerates an entry's own failure. The returned RunResult aggregates the whole
+// sequence: concatenated streams, summed duration, the exit code of the first
+// failing command (0 when all succeed), and the last runner-reported status.
+// Each command goes to the runner as a self-contained copy of the group with
+// exactly one command set; argv-form entries clear Shell so they always
+// safe-exec, string-form entries keep the group's shell.
 func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands []config.CommandSpec) (result.RunResult, error) {
 	var agg result.RunResult
+	var firstErr error
 	for i, s := range commands {
 		if err := ctx.Err(); err != nil {
-			return agg, err
+			e.runDetachedAlways(ctx, group, commands[i:], &agg)
+			if firstErr == nil {
+				firstErr = err
+			}
+			return agg, firstErr
 		}
-		sg := *group
-		sg.Command = s.Command
-		sg.Params = s.Params
-		sg.Commands = nil // the copy presents exactly one command
-		if !s.IsShell {
-			sg.Shell = "" // {command, params} entries are always safe argv exec
+		if firstErr != nil && !s.Always {
+			continue
 		}
-		out, err := e.runner.Run(ctx, &sg, s, e.cfg.Env)
-		agg.Stdout += out.Stdout
-		agg.Stderr += out.Stderr
-		agg.Output += out.Output
-		agg.DurationMs += out.DurationMs
+		out, err := e.runner.Run(ctx, e.commandGroup(group, s), s, e.cfg.Env)
+		aggregate(&agg, &out)
+
+		if err != nil && s.ContinueOnError {
+			// The exit code must not leak into a result reported as
+			// successful, but Status still needs a value: "" is reserved for
+			// groups that never ran.
+			if agg.Status == "" {
+				agg.Status = result.StatusOK
+			}
+			e.log.Warn("command failed; continuing",
+				"group", group.Name, "command", s.Command, "err", err.Error())
+			continue
+		}
 		// First non-ok status wins (mirroring ExitCode): a soft-fail Runner's
 		// Status:"failed" must survive later successful commands, per the
 		// trust-the-runner contract in runGroup.
@@ -372,16 +384,75 @@ func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands 
 		if agg.ExitCode == 0 {
 			agg.ExitCode = out.ExitCode
 		}
-		if err != nil {
-			// Keep singular-group error strings identical to the pre-multi
-			// behavior; only decorate when there is a sequence to point into.
-			if len(commands) > 1 {
-				err = fmt.Errorf("command %d of %d: %w", i+1, len(commands), err)
-			}
-			return agg, err
+		if err == nil {
+			continue
+		}
+		// Keep singular-group error strings identical to the pre-multi
+		// behavior; only decorate when there is a sequence to point into.
+		if len(commands) > 1 {
+			err = fmt.Errorf("command %d of %d: %w", i+1, len(commands), err)
+		}
+		if firstErr == nil {
+			firstErr = err
+			continue
+		}
+		e.log.Warn("always command failed after an earlier failure",
+			"group", group.Name, "command", s.Command, "err", err.Error())
+	}
+	return agg, firstErr
+}
+
+// teardownGrace bounds always entries once the run's own context is dead, so a
+// hung teardown cannot outlive the run indefinitely.
+const teardownGrace = 30 * time.Second
+
+// runDetachedAlways runs the always entries still pending when the context was
+// canceled. A timeout or interrupt is precisely when teardown matters, so they
+// run under a fresh deadline rather than the dead one; their failures are
+// logged, never returned, because the cancellation is the reported cause.
+func (e *Engine) runDetachedAlways(
+	ctx context.Context, group *config.Group, pending []config.CommandSpec, agg *result.RunResult,
+) {
+	var todo []config.CommandSpec
+	for _, s := range pending {
+		if s.Always {
+			todo = append(todo, s)
 		}
 	}
-	return agg, nil
+	if len(todo) == 0 {
+		return
+	}
+	grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), teardownGrace)
+	defer cancel()
+	for _, s := range todo {
+		out, err := e.runner.Run(grace, e.commandGroup(group, s), s, e.cfg.Env)
+		aggregate(agg, &out)
+		if err != nil {
+			e.log.Warn("always command failed after cancellation",
+				"group", group.Name, "command", s.Command, "err", err.Error())
+		}
+	}
+}
+
+// aggregate folds one command's streams and duration into the sequence total.
+func aggregate(agg, out *result.RunResult) {
+	agg.Stdout += out.Stdout
+	agg.Stderr += out.Stderr
+	agg.Output += out.Output
+	agg.DurationMs += out.DurationMs
+}
+
+// commandGroup returns the single-command view of a group that the runner
+// receives. Argv-form entries clear Shell so they can never reach a shell.
+func (e *Engine) commandGroup(group *config.Group, s config.CommandSpec) *config.Group {
+	sg := *group
+	sg.Command = s.Command
+	sg.Params = s.Params
+	sg.Commands = nil
+	if !s.IsShell {
+		sg.Shell = ""
+	}
+	return &sg
 }
 
 // cacheLookup returns the stored entry when caching is enabled for the group,

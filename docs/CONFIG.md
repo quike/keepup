@@ -183,11 +183,13 @@ Map-form entries accept three optional keys. String-form entries do not: the
 shape selects the capabilities, so an entry needing an override is written as a
 map.
 
-| Key      | Type   | Effect                                                                        |
-| -------- | ------ | ----------------------------------------------------------------------------- |
-| `env`    | map    | Layers over the group's `env:` for this command only.                          |
-| `dir`    | string | Runs this command in another directory, without needing a shell.               |
-| `silent` | bool   | Suppresses live streaming; the output is still captured.                       |
+| Key                 | Type   | Effect                                                            |
+| ------------------- | ------ | ----------------------------------------------------------------- |
+| `env`               | map    | Layers over the group's `env:` for this command only.              |
+| `dir`               | string | Runs this command in another directory, without needing a shell.   |
+| `silent`            | bool   | Suppresses live streaming; the output is still captured.           |
+| `continue-on-error` | bool   | This command's failure is tolerated; the sequence continues.       |
+| `always`            | bool   | Runs even when an earlier command already failed.                  |
 
 ```yaml
 groups:
@@ -223,11 +225,50 @@ commands:
       SHA: '{{ output "build" }}'
 ```
 
-`env` and `dir` fold into the cache fingerprint, so changing either re-runs the
-group. `silent` does not: it changes nothing about what the command does or
-produces, so toggling it keeps a valid cached result. A group that uses none of
-these keys keeps the fingerprint it had before they existed — upgrading does not
-invalidate existing caches.
+### Failure policy
+
+By default a sequence stops at the first non-zero exit, like `set -e`. Two
+independent keys bend that, and they compose:
+
+```yaml
+groups:
+  - name: test-with-teardown
+    commands:
+      - ./setup.sh                                          # starts a database
+      - { command: ./optional-lint.sh, continue-on-error: true }
+      - { command: go, params: [test, "./..."] }
+      - { command: ./teardown.sh, always: true }             # runs even if tests fail
+```
+
+`continue-on-error` says this command's outcome does not matter: it is logged as
+a warning, the sequence continues, and the group still succeeds with `exitCode`
+0. Use it for best-effort steps.
+
+`always` guarantees the command runs even after an earlier one failed. It does
+**not** forgive that failure — the group still fails, reporting the original
+error. This is how teardown works. When an `always` command fails after an
+earlier failure, the first error is reported and the second is logged, so the
+diagnostic keeps pointing at the real cause. Combine both keys when a cleanup
+step must run and its own failure should also be ignored.
+
+Entries between the failure and an `always` entry are skipped, not run.
+
+`always` also survives cancellation: when the group hits its `timeout:` or you
+interrupt the run, pending `always` commands still execute, detached from the
+dead deadline and bounded by a 30-second grace period. A hung test that trips a
+timeout still gets its teardown. Their own failures are logged rather than
+reported, since the cancellation is the real cause.
+
+One limit worth knowing: **`retries:` replays the whole sequence**, so an
+`always` teardown runs once per attempt. Keep it idempotent.
+
+### Caching interaction
+
+`env`, `dir`, `continue-on-error`, and `always` all fold into the cache
+fingerprint, so changing any of them re-runs the group. `silent` does not: it
+changes nothing about what the command does or produces, so toggling it keeps a
+valid cached result. A group that uses none of these keys keeps the fingerprint
+it had before they existed — upgrading does not invalidate existing caches.
 
 ### Referencing other groups' output
 

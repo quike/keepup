@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # goreleaser resolves the release tag semantic-release just pushed.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -37,11 +41,18 @@ jobs:
           echo "release-type:      ${{ needs.release.outputs.release-type }}"
           echo "release-git-head:  ${{ needs.release.outputs.release-git-head }}"
           echo "release-git-tag:   ${{ needs.release.outputs.release-git-tag }}"
-      - name: Build
-        env:
-          RELEASE_VERSION: ${{ needs.release.outputs.release-version }}
-        run: make build VERSION="${RELEASE_VERSION:-0.0.0}"
+      - name: Verify and test
+        run: make build-init verify test
       - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7
         with:
           files: target/coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Package and attach release assets
+        if: needs.release.outputs.release-published == 'true'
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: 2.18.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GORELEASER_CURRENT_TAG: ${{ needs.release.outputs.release-git-tag }}

@@ -1,0 +1,35 @@
+version: 2
+project_name: keepup
+
+builds:
+  - binary: keepup
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -X github.com/quike/keepup/cmd.CLIVersion={{ .Version }}
+      - -X github.com/quike/keepup/cmd.CLISha={{ .ShortCommit }}
+      - -X github.com/quike/keepup/cmd.CLIOs={{ .Os }}
+      - -X github.com/quike/keepup/cmd.CLIArch={{ .Arch }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# semantic-release owns versioning and release notes; goreleaser only packages
+# and attaches assets to the release it already created.
+changelog:
+  disable: true
+
+release:
+  mode: append

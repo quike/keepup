@@ -37,6 +37,28 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **JSON events**          | `keepup run --events` and `keepup watch --events` emit a newline-delimited JSON stream for CI tooling. `watch` adds a `watch.trigger {"files":[...]}` event before each debounced re-run; the banner writes to stderr so `--events -` yields pure JSON on stdout. |
 | **Migration**            | `keepup migrate` converts legacy v1 configs to v2 and validates the result.                                                 |
 
+## Install
+
+Download an archive for your platform from the
+[latest release](https://github.com/quike/keepup/releases/latest) — builds are
+published for macOS, Linux, and Windows on both amd64 and arm64:
+
+```sh
+VERSION=1.27.0
+curl -sSLO "https://github.com/quike/keepup/releases/download/v$VERSION/keepup_${VERSION}_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz"
+tar xzf keepup_${VERSION}_*.tar.gz
+sudo install keepup /usr/local/bin/
+```
+
+Each release ships a `checksums.txt`; verify with
+`sha256sum -c checksums.txt --ignore-missing`.
+
+From source:
+
+```sh
+go install github.com/quike/keepup@latest
+```
+
 ## Quick start
 
 ```sh

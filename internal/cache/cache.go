@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"time"
 
@@ -35,8 +37,8 @@ type Store interface {
 }
 
 // Compute returns a content fingerprint for the given cache spec. The
-// fingerprint changes when the method, any command/param/form in the group's
-// command list, or any matched input file changes. For shell-form entries the
+// fingerprint changes when the method, any command/param/form/env/dir in the
+// group's command list, or any matched input file changes. For shell-form entries the
 // fingerprint also changes when the shell program changes. A glob that matches
 // nothing contributes nothing, so adding the first matching file naturally
 // changes the fingerprint.
@@ -56,6 +58,14 @@ func Compute(spec *config.Cache, shell string, commands []config.CommandSpec) (s
 		}
 		for _, p := range c.Params {
 			fmt.Fprintf(h, "%s\x01", p)
+		}
+		// Emitted only when set: a config using neither must keep hashing as it
+		// did before they existed, or every cache entry silently invalidates.
+		if c.Dir != "" {
+			fmt.Fprintf(h, "%s\x03", c.Dir)
+		}
+		for _, k := range slices.Sorted(maps.Keys(c.Env)) {
+			fmt.Fprintf(h, "%s\x04%s\x03", k, c.Env[k])
 		}
 		fmt.Fprintf(h, "\x02")
 	}

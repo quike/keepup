@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/quike/keepup/internal/template"
 )
@@ -27,6 +29,16 @@ func ExtractRefs(g *Group) ([]string, error) {
 		}
 		for _, p := range cs.Params {
 			if err := collect(p); err != nil {
+				return nil, err
+			}
+		}
+		if err := collect(cs.Dir); err != nil {
+			return nil, err
+		}
+		// Sorted: map order is random, and these refs become dag edges and
+		// graph output, which must not shuffle between runs.
+		for _, k := range slices.Sorted(maps.Keys(cs.Env)) {
+			if err := collect(cs.Env[k]); err != nil {
 				return nil, err
 			}
 		}

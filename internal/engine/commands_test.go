@@ -31,10 +31,10 @@ type specCall struct {
 	shell   string
 }
 
-func (f *specRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
+func (f *specRunner) Run(_ context.Context, g *config.Group, spec config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, specCall{command: g.Command, params: append([]string(nil), params...), shell: g.Shell})
+	f.calls = append(f.calls, specCall{command: g.Command, params: append([]string(nil), spec.Params...), shell: g.Shell})
 	out := f.outputs[g.Command]
 	rr := result.RunResult{Stdout: out, Output: out, Status: result.StatusOK, DurationMs: 1}
 	if err, ok := f.failOnce[g.Command]; ok {
@@ -199,7 +199,7 @@ type softFailRunner struct {
 	calls int
 }
 
-func (f *softFailRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
+func (f *softFailRunner) Run(_ context.Context, _ *config.Group, _ config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++

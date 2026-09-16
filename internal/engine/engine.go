@@ -185,9 +185,39 @@ func (e *Engine) expandCommands(group *config.Group, data template.Data) ([]conf
 				return nil, fmt.Errorf("group %q: expand param %d: %w", group.Name, j+1, err)
 			}
 		}
-		expanded[i] = config.CommandSpec{Command: cmd, Params: params, IsShell: s.IsShell}
+		dir := s.Dir
+		if dir != "" {
+			if dir, err = e.expander.Expand(s.Dir, data); err != nil {
+				return nil, fmt.Errorf("group %q: expand dir: %w", group.Name, err)
+			}
+		}
+		env, err := e.expandEnv(group.Name, s.Env, data)
+		if err != nil {
+			return nil, err
+		}
+		// Copy the spec so fields that need no expansion (Silent, IsShell, and
+		// anything added later) carry through instead of being dropped.
+		out := s
+		out.Command, out.Params, out.Dir, out.Env = cmd, params, dir, env
+		expanded[i] = out
 	}
 	return expanded, nil
+}
+
+// expandEnv renders each value of a per-command env map. Keys are literal.
+func (e *Engine) expandEnv(group string, env map[string]string, data template.Data) (map[string]string, error) {
+	if len(env) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		rendered, err := e.expander.Expand(v, data)
+		if err != nil {
+			return nil, fmt.Errorf("group %q: expand env %q: %w", group, k, err)
+		}
+		out[k] = rendered
+	}
+	return out, nil
 }
 
 // runGroup decides whether and how to execute a group. The decision order is:
@@ -328,7 +358,7 @@ func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands 
 		if !s.IsShell {
 			sg.Shell = "" // {command, params} entries are always safe argv exec
 		}
-		out, err := e.runner.Run(ctx, &sg, s.Params, e.cfg.Env)
+		out, err := e.runner.Run(ctx, &sg, s, e.cfg.Env)
 		agg.Stdout += out.Stdout
 		agg.Stderr += out.Stderr
 		agg.Output += out.Output

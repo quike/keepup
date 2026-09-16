@@ -58,7 +58,8 @@ func TestShellRunner_DirectExecNoShell(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			r := &ShellRunner{Stdout: &stdout, Stderr: &stderr}
 			out, err := r.Run(context.Background(),
-				&config.Group{Name: "g", Command: "echo"}, tc.params, nil)
+				&config.Group{Name: "g", Command: "echo"},
+				config.CommandSpec{Command: "echo", Params: tc.params}, nil)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
@@ -77,7 +78,8 @@ func TestShellRunner_ShellModeOptIn(t *testing.T) {
 	r := &ShellRunner{Stdout: &stdout, Stderr: &stderr}
 	// Now shell substitutions DO work because the user opted in.
 	out, err := r.Run(context.Background(),
-		&config.Group{Name: "g", Command: "echo $((1+2))", Shell: "/bin/sh"}, nil, nil)
+		&config.Group{Name: "g", Command: "echo $((1+2))", Shell: "/bin/sh"},
+		config.CommandSpec{Command: "echo $((1+2))", IsShell: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "3\n", strings.TrimLeft(out.Output, " "))
 }
@@ -91,7 +93,7 @@ func TestShellRunner_ShellModeWithParams(t *testing.T) {
 	// the result to "sh -c". This exercises the params-join branch.
 	out, err := r.Run(context.Background(),
 		&config.Group{Name: "g", Command: "echo", Shell: "/bin/sh"},
-		[]string{"hello", "world"}, nil)
+		config.CommandSpec{Command: "echo", Params: []string{"hello", "world"}, IsShell: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "hello world\n", out.Output)
 }
@@ -104,7 +106,7 @@ func TestShellRunner_NilWritersFallbackToProcessStdio(t *testing.T) {
 	// without asserting on the process stdio.
 	r := &ShellRunner{} // Stdout and Stderr are both nil
 	out, err := r.Run(context.Background(),
-		&config.Group{Name: "g", Command: "echo"}, []string{"x"}, nil)
+		&config.Group{Name: "g", Command: "echo"}, config.CommandSpec{Command: "echo", Params: []string{"x"}}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "x\n", out.Output)
 }
@@ -114,7 +116,7 @@ func TestShellRunner_FailingCommand(t *testing.T) {
 	t.Parallel()
 	r := &ShellRunner{Stdout: io.Discard, Stderr: io.Discard}
 	_, err := r.Run(context.Background(),
-		&config.Group{Name: "g", Command: "false"}, nil, nil)
+		&config.Group{Name: "g", Command: "false"}, config.CommandSpec{Command: "false"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `run "g"`)
 }
@@ -125,7 +127,8 @@ func TestShellRunner_ContextCancellation(t *testing.T) {
 	r := &ShellRunner{Stdout: io.Discard, Stderr: io.Discard}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := r.Run(ctx, &config.Group{Name: "g", Command: "sleep"}, []string{"5"}, nil)
+	_, err := r.Run(ctx, &config.Group{Name: "g", Command: "sleep"},
+		config.CommandSpec{Command: "sleep", Params: []string{"5"}}, nil)
 	require.Error(t, err)
 }
 
@@ -139,7 +142,7 @@ func TestShellRunner_EnvOverlayPrecedence(t *testing.T) {
 			Command: "printenv",
 			Env:     map[string]string{"X": "group"},
 		},
-		[]string{"X"},
+		config.CommandSpec{Command: "printenv", Params: []string{"X"}},
 		map[string]string{"X": "global"},
 	)
 	require.NoError(t, err)
@@ -197,7 +200,7 @@ func TestShellRunner_SeparatesStdoutAndStderr(t *testing.T) {
 		Command: "printf 'out'; printf 'err' >&2",
 		Shell:   "/bin/sh",
 	}
-	rr, err := r.Run(context.Background(), g, nil, nil)
+	rr, err := r.Run(context.Background(), g, config.CommandSpec{Command: g.Command, Params: g.Params, IsShell: g.UseShell()}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "out", rr.Stdout)
 	assert.Equal(t, "err", rr.Stderr)

@@ -106,14 +106,14 @@ type recordingRunner struct {
 	commands map[string]string
 }
 
-func (r *recordingRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
+func (r *recordingRunner) Run(_ context.Context, g *config.Group, spec config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.params == nil {
 		r.params = map[string]string{}
 		r.commands = map[string]string{}
 	}
-	r.params[g.Name] = strings.Join(params, ",")
+	r.params[g.Name] = strings.Join(spec.Params, ",")
 	r.commands[g.Name] = g.Command
 	stdout := r.outputs[g.Name]
 	return result.RunResult{Stdout: stdout, Output: stdout, Status: "ok"}, nil
@@ -134,10 +134,12 @@ func TestEngine_Template_BadCommandFailsGroup(t *testing.T) {
 // and echoes its first param as output so downstream refs resolve.
 type captureCommandRunner struct{ lastCommand string }
 
-func (r *captureCommandRunner) Run(_ context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
+func (r *captureCommandRunner) Run(
+	_ context.Context, g *config.Group, spec config.CommandSpec, _ map[string]string,
+) (result.RunResult, error) {
 	r.lastCommand = g.Command
-	if len(params) > 0 {
-		return result.RunResult{Stdout: params[0], Output: params[0], Status: "ok"}, nil
+	if len(spec.Params) > 0 {
+		return result.RunResult{Stdout: spec.Params[0], Output: spec.Params[0], Status: "ok"}, nil
 	}
 	return result.RunResult{Status: "ok"}, nil
 }

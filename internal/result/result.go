@@ -20,9 +20,9 @@ type RunResult struct {
 	// matching the historical (pre-structured-outputs) capture behavior.
 	// The `output "x"` template function returns strings.TrimSpace(Output).
 	Output string `json:"output,omitempty"`
-	// ExitCode is the process exit code. Always 0 in stored results today
-	// (non-zero aborts the flow before storage). Laid down for a future
-	// soft-fail / continue-on-error feature.
+	// ExitCode is the process exit code. Still always 0 in stored results: a
+	// hard failure aborts the flow before storage, and a continue-on-error
+	// entry's failure is tolerated rather than recorded.
 	ExitCode int `json:"exitCode,omitempty"`
 	// DurationMs is wall-clock milliseconds for the command run. 0 for
 	// skipped and cache-hit groups.

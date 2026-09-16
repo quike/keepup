@@ -107,6 +107,31 @@ func TestCommandSpec_UnmarshalYAML_PerCommandKnobs(t *testing.T) {
 			},
 		},
 		{
+			name: "per-command continue-on-error",
+			yaml: `{command: ./lint.sh, continue-on-error: true}`,
+			want: CommandSpec{Command: "./lint.sh", ContinueOnError: true},
+		},
+		{
+			name: "per-command always",
+			yaml: `{command: ./teardown.sh, always: true}`,
+			want: CommandSpec{Command: "./teardown.sh", Always: true},
+		},
+		{
+			name: "failure policy keys compose",
+			yaml: `{command: ./cleanup.sh, always: true, continue-on-error: true}`,
+			want: CommandSpec{Command: "./cleanup.sh", Always: true, ContinueOnError: true},
+		},
+		{
+			name:    "continue-on-error must be a boolean",
+			yaml:    `{command: go, continue-on-error: sometimes}`,
+			wantErr: `"continue-on-error" must be a boolean`,
+		},
+		{
+			name:    "always must be a boolean",
+			yaml:    `{command: go, always: yep}`,
+			wantErr: `"always" must be a boolean`,
+		},
+		{
 			name:    "empty dir rejected",
 			yaml:    `{command: go, dir: ""}`,
 			wantErr: `"dir" must not be empty`,
@@ -513,4 +538,24 @@ func TestLoadConfig_PerCommandKnobsFixture(t *testing.T) {
 	refs, err := ExtractRefs(knobs)
 	require.NoError(t, err)
 	assert.Contains(t, refs, "single", "an env template must register as a dependency")
+}
+
+func TestLoadConfig_FailurePolicyFixture(t *testing.T) {
+	cfg, err := LoadConfig("./test-resources/config-commands-valid.yml")
+	require.NoError(t, err)
+
+	policy := cfg.GroupByName("policy")
+	require.NotNil(t, policy)
+	list := policy.CommandList()
+	require.Len(t, list, 4)
+
+	assert.True(t, list[0].ContinueOnError)
+	assert.False(t, list[0].Always)
+	assert.True(t, list[2].Always)
+	assert.False(t, list[2].ContinueOnError)
+	assert.True(t, list[3].Always, "the two keys compose on one entry")
+	assert.True(t, list[3].ContinueOnError)
+
+	assert.False(t, list[1].Always, "an entry declaring neither stays strict")
+	assert.False(t, list[1].ContinueOnError)
 }

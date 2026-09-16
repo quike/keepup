@@ -37,6 +37,15 @@ groups:
         env:
           SHA: '{{ output "single" }}'
 
+  # failure policy — a tolerated failure, then a teardown that always runs
+  - name: policy
+    description: "Per-command failure policy"
+    commands:
+      - { command: "false", continue-on-error: true }
+      - { command: echo, params: [work] }
+      - { command: echo, params: [teardown], always: true }
+      - { command: "false", always: true, continue-on-error: true }
+
 flows:
   ci:
     description: "Multi then single"
@@ -44,5 +53,6 @@ flows:
       - run: [multi]
       - run: [single]
       - run: [knobs]
+      - run: [policy]
 
 default: ci

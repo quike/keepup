@@ -37,8 +37,8 @@ type Store interface {
 }
 
 // Compute returns a content fingerprint for the given cache spec. The
-// fingerprint changes when the method, any command/param/form/env/dir in the
-// group's command list, or any matched input file changes. For shell-form entries the
+// fingerprint changes when the method, anything about a command in the group's
+// list except silent, or any matched input file changes. For shell-form entries the
 // fingerprint also changes when the shell program changes. A glob that matches
 // nothing contributes nothing, so adding the first matching file naturally
 // changes the fingerprint.
@@ -66,6 +66,14 @@ func Compute(spec *config.Cache, shell string, commands []config.CommandSpec) (s
 		}
 		for _, k := range slices.Sorted(maps.Keys(c.Env)) {
 			fmt.Fprintf(h, "%s\x04%s\x03", k, c.Env[k])
+		}
+		// Distinct markers: the two policies change whether the group
+		// succeeds, so they must never hash alike.
+		if c.ContinueOnError {
+			fmt.Fprintf(h, "coe\x03")
+		}
+		if c.Always {
+			fmt.Fprintf(h, "alw\x03")
 		}
 		fmt.Fprintf(h, "\x02")
 	}

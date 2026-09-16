@@ -25,6 +25,7 @@ func newWatchCmd(opts *runtimeOpts, _ io.Writer) *cobra.Command {
 			return runWatch(cmd, args, opts, eventsPath)
 		},
 	}
+	cmd.ValidArgsFunction = completeFlows(opts)
 	cmd.Flags().StringVar(&eventsPath, "events", "",
 		"Write a JSON event stream to this file ('-' for stdout)")
 	return cmd

@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	appName        = "keepup"
-	listKindFlows  = "flows"
-	listKindGroups = "groups"
-	noDescription  = "(no description)"
-	validateCmdUse = "validate"
+	appName           = "keepup"
+	listKindFlows     = "flows"
+	listKindGroups    = "groups"
+	noDescription     = "(no description)"
+	validateCmdUse    = "validate"
+	defaultFlowMarker = "(default)"
 )
 
 // runtimeOpts carries the parsed CLI state for one Execute() invocation.
@@ -116,6 +117,7 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 			return e.RunFlow(cmd.Context(), flowName)
 		},
 	}
+	cmd.ValidArgsFunction = completeFlows(opts)
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "Ignore cached results; run every group")
 	cmd.Flags().StringVar(&eventsPath, "events", "", "Write a JSON event stream to this file ('-' for stdout)")
 	return cmd
@@ -136,9 +138,10 @@ func openEventsWriter(path string, stdout io.Writer) (io.Writer, func(), error) 
 
 func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list [flows|groups]",
-		Short: "List declared flows (default) or groups",
-		Args:  cobra.MaximumNArgs(1),
+		Use:       "list [flows|groups]",
+		Short:     "List declared flows (default) or groups",
+		Args:      cobra.MaximumNArgs(1),
+		ValidArgs: []string{listKindFlows, listKindGroups},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.load(cmd.OutOrStdout()); err != nil {
 				return err
@@ -174,13 +177,19 @@ func newValidateCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 	}
 }
 
-func printFlows(out io.Writer, cfg *config.Config) error {
+// sortedFlowNames returns the declared flow names in a stable order, shared by
+// `keepup list` and flow-name completion so the two cannot drift.
+func sortedFlowNames(cfg *config.Config) []string {
 	names := make([]string, 0, len(cfg.Flows))
 	for n := range cfg.Flows {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	for _, n := range names {
+	return names
+}
+
+func printFlows(out io.Writer, cfg *config.Config) error {
+	for _, n := range sortedFlowNames(cfg) {
 		f := cfg.Flows[n]
 		marker := " "
 		if cfg.Default == n {

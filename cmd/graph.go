@@ -12,9 +12,10 @@ import (
 
 func newGraphCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:   "graph [flow]",
-		Short: "Emit a Mermaid diagram of the data DAG for a flow",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "graph [flow]",
+		Short:             "Emit a Mermaid diagram of the data DAG for a flow",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeFlows(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.load(cmd.OutOrStdout()); err != nil {
 				return err

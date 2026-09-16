@@ -17,15 +17,19 @@ generate:
 format:
     @make format
 
-# Remove target/ and run go mod tidy
+# Remove target/
 clean:
     @make clean
+
+# Tidy go.mod and go.sum
+tidy:
+    @make tidy
 
 # Run tests with race detector and coverage
 test:
     @make test
 
-# go mod verify + go vet
+# go mod verify + tidy check + go vet
 verify:
     @make verify
 

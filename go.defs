@@ -23,6 +23,8 @@ format:
 clean:
 	@echo "Cleaning $(TARGET_DIR)/"
 	@rm -rf $(TARGET_DIR)
+
+tidy:
 	go mod tidy
 
 test:
@@ -31,6 +33,7 @@ test:
 
 verify:
 	go mod verify
+	@go mod tidy -diff || (echo "go.mod/go.sum are not tidy; run 'make tidy'" && exit 1)
 	go vet -all $(PACKAGES)
 
 compile:

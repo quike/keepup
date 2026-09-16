@@ -146,3 +146,9 @@ config-*.yml
 
 # keepup fingerprint cache (runtime artifact)
 .keepup-cache/
+
+# codecov-action downloads its uploader into the workspace root; goreleaser
+# refuses to run on a dirty tree
+codecov
+codecov.SHA256SUM
+codecov.SHA256SUM.sig

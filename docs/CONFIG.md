@@ -171,6 +171,42 @@ config load. To pipe one command's output into another within an entry, use a
 shell-form entry (`a | b`); to chain across cacheable units, split into
 separate groups.
 
+### Groups do not nest
+
+A `commands:` entry runs a command. It cannot call another group — there is no
+`{group: other}` entry form, and there are no plans for one.
+
+Composition belongs to flows. A group is keepup's atomic unit: it owns one cache
+fingerprint, one `require:`/`skip-if:` gate, and one node in the graph. A group
+calling another group would have to answer whose `cache:` applies, whose gating
+runs, and what a cache hit on the inner group means for the outer one — while
+re-creating the ordering that `steps:` and `run:` already express.
+
+To reuse a sequence, extract it into its own group and name it from both flows:
+
+```yaml
+groups:
+  - name: build
+    commands:
+      - { command: go, params: [build, "./..."] }
+  - name: test
+    command: go
+    params: [test, "./..."]
+
+flows:
+  ci:
+    steps:
+      - run: [build]
+      - run: [test]
+  release:
+    steps:
+      - run: [build] # same group, no duplication
+```
+
+If you need ordering *inside* one cacheable unit, that is what `commands:` is
+for. If you need it *across* units, that is what a flow is for. If you hit a
+case neither expresses, it is worth reopening — with the example.
+
 The singular `command`/`params` form remains first-class and is internally
 normalized to a one-element `commands:` list, so both forms share one
 execution path. Setting both `command` and `commands` on one group is a

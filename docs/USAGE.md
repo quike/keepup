@@ -60,6 +60,7 @@ keepup list groups        # list groups
 keepup validate           # parse & reference-check; no execution
 keepup graph [flow]       # emit a Mermaid diagram of the data DAG
 keepup migrate <path>     # convert a legacy v1 file to v2
+keepup completion <shell> # print a shell completion script (see below)
 keepup version
 ```
 
@@ -69,6 +70,38 @@ Common flags:
 - `-d, --dry-run` — log what would run; never invoke the runner
 - `-v, --verbose` — dump the parsed config before running
 - `--no-cache` (run only) — ignore cached results and run every group
+
+## Shell completion
+
+Once the completion script is installed, the flow argument of `run`, `watch`,
+and `graph` completes from the flows declared in the config that command would
+load — including the one `--config` already on the line:
+
+```sh
+$ keepup run <TAB>
+build   ci  -- lint, test, build   clean  -- remove artifacts
+```
+
+Descriptions come from each flow's `description:`, and the default flow is
+marked `(default)`, so a Tab tells you what a bare `keepup run` would execute.
+`keepup list <TAB>` completes `flows`/`groups`.
+
+Install the script for your shell:
+
+```sh
+# bash (needs bash-completion)
+keepup completion bash > /etc/bash_completion.d/keepup
+
+# zsh — anywhere on $fpath
+keepup completion zsh > "${fpath[1]}/_keepup"
+
+# fish
+keepup completion fish > ~/.config/fish/completions/keepup.fish
+```
+
+Completion never fails the shell: a missing, unreadable, or invalid config
+simply offers nothing. It also never falls back to filename completion, so a
+flow name that does not exist stays empty rather than suggesting files.
 
 ## Watch mode
 

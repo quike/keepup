@@ -22,11 +22,27 @@ groups:
     command: echo
     params: [single-step]
 
+  # per-command overrides — map form only
+  - name: knobs
+    description: "Per-command env, dir and silent"
+    env:
+      LAYER: group
+    commands:
+      - { command: printenv, params: [LAYER], env: { LAYER: command } }
+      - { command: pwd, dir: /tmp }
+      - { command: echo, params: [quiet], silent: true }
+      - command: echo
+        params: [templated]
+        dir: '/tmp/{{ env "HOME" }}'
+        env:
+          SHA: '{{ output "single" }}'
+
 flows:
   ci:
     description: "Multi then single"
     steps:
       - run: [multi]
       - run: [single]
+      - run: [knobs]
 
 default: ci

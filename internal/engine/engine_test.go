@@ -25,7 +25,7 @@ type fakeRunner struct {
 	delays  map[string]time.Duration
 }
 
-func (f *fakeRunner) Run(ctx context.Context, g *config.Group, params []string, _ map[string]string) (result.RunResult, error) {
+func (f *fakeRunner) Run(ctx context.Context, g *config.Group, spec config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	if d := f.delays[g.Name]; d > 0 {
 		select {
 		case <-time.After(d):
@@ -35,7 +35,7 @@ func (f *fakeRunner) Run(ctx context.Context, g *config.Group, params []string, 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, g.Name+":"+strings.Join(params, ","))
+	f.calls = append(f.calls, g.Name+":"+strings.Join(spec.Params, ","))
 	stdout := f.outputs[g.Name]
 	rr := result.RunResult{
 		Stdout: stdout,
@@ -197,7 +197,7 @@ type concurrencyRunner struct {
 	after  func()
 }
 
-func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
+func (c *concurrencyRunner) Run(_ context.Context, _ *config.Group, _ config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	c.before()
 	defer c.after()
 	return result.RunResult{Status: "ok"}, nil

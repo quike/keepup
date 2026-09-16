@@ -22,11 +22,12 @@ const (
 	defaultPosixSh = "/bin/sh"
 )
 
-// Runner executes a single group and returns its structured RunResult. The
-// params argument is authoritative for the command's arguments; implementations
-// must not read g.Params or g.Commands.
+// Runner executes one expanded command and returns its structured RunResult.
+// The spec is authoritative for the command, its arguments, and its per-command
+// overrides; the group supplies only the surrounding context (name, shell, env).
+// Implementations must not read g.Command, g.Params, or g.Commands.
 type Runner interface {
-	Run(ctx context.Context, g *config.Group, params []string, globalEnv map[string]string) (result.RunResult, error)
+	Run(ctx context.Context, g *config.Group, spec config.CommandSpec, globalEnv map[string]string) (result.RunResult, error)
 }
 
 // ShellRunner executes a group via os/exec, optionally through a system shell.
@@ -53,8 +54,10 @@ func NewShellRunner() *ShellRunner {
 //
 // The command and arguments come from user-supplied configuration; that is
 // the point of this tool. gosec G204 is suppressed for the exec call.
-func (r *ShellRunner) Run(ctx context.Context, g *config.Group, params []string, globalEnv map[string]string) (result.RunResult, error) {
-	cmd := r.buildCmd(ctx, g, params, globalEnv)
+func (r *ShellRunner) Run(
+	ctx context.Context, g *config.Group, spec config.CommandSpec, globalEnv map[string]string,
+) (result.RunResult, error) {
+	cmd := r.buildCmd(ctx, g, spec, globalEnv)
 
 	captureStdout := &safeBuf{}
 	captureStderr := &safeBuf{}
@@ -66,6 +69,11 @@ func (r *ShellRunner) Run(ctx context.Context, g *config.Group, params []string,
 	stderr := r.Stderr
 	if stderr == nil {
 		stderr = os.Stderr
+	}
+	if spec.Silent {
+		// Drop only the live writers; the capture buffers below are what
+		// {{ output }} and the cache replay read, so they stay wired.
+		stdout, stderr = io.Discard, io.Discard
 	}
 	cmd.Stdout = io.MultiWriter(stdout, captureStdout, captureCombined)
 	cmd.Stderr = io.MultiWriter(stderr, captureStderr, captureCombined)
@@ -94,19 +102,21 @@ func (r *ShellRunner) Run(ctx context.Context, g *config.Group, params []string,
 
 // buildCmd assembles the exec.Cmd for a group invocation, honoring shell
 // opt-in and the layered environment.
-func (r *ShellRunner) buildCmd(ctx context.Context, g *config.Group, params []string, globalEnv map[string]string) *exec.Cmd {
+func (r *ShellRunner) buildCmd(ctx context.Context, g *config.Group, spec config.CommandSpec, globalEnv map[string]string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if g.UseShell() {
 		shell := pickShell(g.Shell)
-		full := g.Command
-		if len(params) > 0 {
-			full = g.Command + " " + strings.Join(params, " ")
+		full := spec.Command
+		if len(spec.Params) > 0 {
+			full = spec.Command + " " + strings.Join(spec.Params, " ")
 		}
 		cmd = exec.CommandContext(ctx, shell, shellFlag(), full)
 	} else {
-		cmd = exec.CommandContext(ctx, g.Command, params...) //nolint:gosec // user-declared command
+		cmd = exec.CommandContext(ctx, spec.Command, spec.Params...) //nolint:gosec // user-declared command
 	}
-	cmd.Env = mergeEnvs(os.Environ(), globalEnv, g.Env)
+	// Layering: process < global env: < group env: < command env:.
+	cmd.Env = mergeEnvs(os.Environ(), globalEnv, g.Env, spec.Env)
+	cmd.Dir = spec.Dir
 	return cmd
 }
 

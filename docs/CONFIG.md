@@ -156,7 +156,8 @@ caching, gating, and output:
   order; `exitCode` is the first failing command's (0 when all succeed);
   `durationMs` covers the whole sequence
 - `cache` fingerprints every command in the list — changing any entry busts
-  the cache
+  the cache (see [Per-command overrides](#per-command-overrides) for how
+  `env`/`dir`/`silent` participate)
 - `require`/`skip-if` gate the whole sequence, and templating expands each
   entry's command/params individually
 - `retries:` replays the **whole sequence** from the first command on each
@@ -175,6 +176,58 @@ normalized to a one-element `commands:` list, so both forms share one
 execution path. Setting both `command` and `commands` on one group is a
 load error, as is a string-form entry on a group with no `shell:`, or an
 empty `commands:` list.
+
+### Per-command overrides
+
+Map-form entries accept three optional keys. String-form entries do not: the
+shape selects the capabilities, so an entry needing an override is written as a
+map.
+
+| Key      | Type   | Effect                                                                        |
+| -------- | ------ | ----------------------------------------------------------------------------- |
+| `env`    | map    | Layers over the group's `env:` for this command only.                          |
+| `dir`    | string | Runs this command in another directory, without needing a shell.               |
+| `silent` | bool   | Suppresses live streaming; the output is still captured.                       |
+
+```yaml
+groups:
+  - name: release
+    env:
+      BUILD_MODE: release
+    commands:
+      - { command: go, params: [build, "./..."], env: { CGO_ENABLED: "0" } }
+      - { command: ./package.sh, dir: dist }
+      - { command: ./notify.sh, silent: true }
+```
+
+`env` precedence, lowest to highest: process environment, global `env:`, group
+`env:`, command `env:`. A command's `env` applies to that command alone and does
+not leak into the entries around it.
+
+`dir` is resolved relative to the process working directory and must not be
+empty. It is the reason to prefer a map entry over `cd x && ./y`: the latter is
+a string-form entry, which forces `shell:` on the whole group and gives up safe
+argv execution for every command in it.
+
+`silent` affects only what is streamed to your terminal. Capture is unchanged,
+so `{{ output }}` references, the JSON event stream, and cache replay all still
+see the full output.
+
+Both `env` values and `dir` are templated like `command` and `params`:
+
+```yaml
+commands:
+  - command: ./package.sh
+    dir: 'dist/{{ env "TARGET" }}'
+    env:
+      SHA: '{{ output "build" }}'
+```
+
+`env` and `dir` fold into the cache fingerprint, so changing either re-runs the
+group. `silent` does not: it changes nothing about what the command does or
+produces, so toggling it keeps a valid cached result. A group that uses none of
+these keys keeps the fingerprint it had before they existed — upgrading does not
+invalidate existing caches.
 
 ### Referencing other groups' output
 

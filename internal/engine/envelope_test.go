@@ -21,7 +21,7 @@ type flakyRunner struct {
 	output    string
 }
 
-func (r *flakyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
+func (r *flakyRunner) Run(_ context.Context, _ *config.Group, _ config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	n := atomic.AddInt32(&r.calls, 1)
 	if n <= r.failUntil {
 		return result.RunResult{ExitCode: 1}, errors.New("transient failure")
@@ -33,7 +33,7 @@ func (r *flakyRunner) Run(_ context.Context, _ *config.Group, _ []string, _ map[
 // exercise timeouts.
 type blockingRunner struct{ calls int32 }
 
-func (r *blockingRunner) Run(ctx context.Context, _ *config.Group, _ []string, _ map[string]string) (result.RunResult, error) {
+func (r *blockingRunner) Run(ctx context.Context, _ *config.Group, _ config.CommandSpec, _ map[string]string) (result.RunResult, error) {
 	atomic.AddInt32(&r.calls, 1)
 	<-ctx.Done()
 	return result.RunResult{}, ctx.Err()

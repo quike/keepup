@@ -67,6 +67,87 @@ func TestCommandSpec_UnmarshalYAML(t *testing.T) {
 			wantErr: "must be a string or a {command, params} map",
 		},
 	}
+	runCommandSpecCases(t, tests)
+}
+
+func TestCommandSpec_UnmarshalYAML_PerCommandKnobs(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		want    CommandSpec
+		wantErr string
+	}{
+		{
+			name: "per-command env",
+			yaml: `{command: go, params: [build], env: {CGO_ENABLED: "0"}}`,
+			want: CommandSpec{
+				Command: "go",
+				Params:  []string{"build"},
+				Env:     map[string]string{"CGO_ENABLED": "0"},
+			},
+		},
+		{
+			name: "per-command dir",
+			yaml: `{command: ./package.sh, dir: dist}`,
+			want: CommandSpec{Command: "./package.sh", Dir: "dist"},
+		},
+		{
+			name: "per-command silent",
+			yaml: `{command: ./notify.sh, silent: true}`,
+			want: CommandSpec{Command: "./notify.sh", Silent: true},
+		},
+		{
+			name: "all three knobs together",
+			yaml: `{command: ./x.sh, dir: build, silent: true, env: {A: "1", B: "2"}}`,
+			want: CommandSpec{
+				Command: "./x.sh",
+				Dir:     "build",
+				Silent:  true,
+				Env:     map[string]string{"A": "1", "B": "2"},
+			},
+		},
+		{
+			name:    "empty dir rejected",
+			yaml:    `{command: go, dir: ""}`,
+			wantErr: `"dir" must not be empty`,
+		},
+		{
+			name:    "empty env key rejected",
+			yaml:    `{command: go, env: {"": "1"}}`,
+			wantErr: `"env" keys must not be empty`,
+		},
+		{
+			name:    "dir must be a string",
+			yaml:    `{command: go, dir: [a]}`,
+			wantErr: `"dir" must be a string`,
+		},
+		{
+			name:    "silent must be a boolean",
+			yaml:    `{command: go, silent: maybe}`,
+			wantErr: `"silent" must be a boolean`,
+		},
+		{
+			name:    "env must be a string map",
+			yaml:    `{command: go, env: [a]}`,
+			wantErr: `"env" must be a map of strings`,
+		},
+		{
+			name: "string form stays knob-free",
+			yaml: `go test ./...`,
+			want: CommandSpec{Command: "go test ./...", IsShell: true},
+		},
+	}
+	runCommandSpecCases(t, tests)
+}
+
+func runCommandSpecCases(t *testing.T, tests []struct {
+	name    string
+	yaml    string
+	want    CommandSpec
+	wantErr string
+},
+) {
+	t.Helper()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var cs CommandSpec
@@ -268,6 +349,43 @@ func TestExtractRefs_CommandsEntries(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, refs)
 }
 
+// ExtractRefs drives the dag scheduler's edges, load-time reference validation,
+// and `keepup graph`, so dir/env templates must register there too.
+func TestExtractRefs_DirAndEnv(t *testing.T) {
+	g := &Group{Name: "g", Commands: []CommandSpec{{
+		Command: "./package.sh",
+		Dir:     `dist/{{ output "target" }}`,
+		Env:     map[string]string{"SHA": `{{ output "build" }}`},
+	}}}
+	refs, err := ExtractRefs(g)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"target", "build"}, refs)
+}
+
+// Env keys are unordered; unstable extraction would shuffle the dag edges.
+func TestExtractRefs_EnvOrderIsStable(t *testing.T) {
+	g := &Group{Name: "g", Commands: []CommandSpec{{
+		Command: "x",
+		Env: map[string]string{
+			"A": `{{ output "one" }}`, "B": `{{ output "two" }}`,
+			"C": `{{ output "three" }}`, "D": `{{ output "four" }}`,
+		},
+	}}}
+	want, err := ExtractRefs(g)
+	require.NoError(t, err)
+	for range 20 {
+		got, err := ExtractRefs(g)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	}
+}
+
+func TestExtractRefs_MalformedDirTemplate(t *testing.T) {
+	g := &Group{Name: "g", Commands: []CommandSpec{{Command: "x", Dir: `{{ output "a" `}}}
+	_, err := ExtractRefs(g)
+	require.Error(t, err)
+}
+
 func TestValidateReferences_CommandsEntryForwardRef(t *testing.T) {
 	yml := `
 version: 2
@@ -369,4 +487,30 @@ func TestLoadConfig_CommandsFixture(t *testing.T) {
 	assert.Equal(t,
 		[]CommandSpec{{Command: "echo", Params: []string{"single-step"}}},
 		single.CommandList())
+}
+
+func TestLoadConfig_PerCommandKnobsFixture(t *testing.T) {
+	cfg, err := LoadConfig("./test-resources/config-commands-valid.yml")
+	require.NoError(t, err)
+
+	knobs := cfg.GroupByName("knobs")
+	require.NotNil(t, knobs)
+	list := knobs.CommandList()
+	require.Len(t, list, 4)
+
+	assert.Equal(t, map[string]string{"LAYER": "command"}, list[0].Env)
+	assert.Equal(t, "/tmp", list[1].Dir)
+	assert.True(t, list[2].Silent)
+	assert.Equal(t, `/tmp/{{ env "HOME" }}`, list[3].Dir, "templates survive load unrendered")
+	assert.Equal(t, map[string]string{"SHA": `{{ output "single" }}`}, list[3].Env)
+
+	// Entries that declare no overrides must stay zero-valued rather than
+	// inheriting the group's env by accident at load time.
+	assert.Nil(t, list[1].Env)
+	assert.Empty(t, list[0].Dir)
+	assert.False(t, list[0].Silent)
+
+	refs, err := ExtractRefs(knobs)
+	require.NoError(t, err)
+	assert.Contains(t, refs, "single", "an env template must register as a dependency")
 }

@@ -215,6 +215,11 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 type CommandSpec struct {
 	Command string   `yaml:"command" json:"command"`
 	Params  []string `yaml:"params,omitempty" json:"params,omitempty"`
+	// Map-form-only overrides: Env layers over the group's env:, Dir needs no
+	// shell, and Silent suppresses streaming but not capture.
+	Env    map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Dir    string            `yaml:"dir,omitempty" json:"dir,omitempty"`
+	Silent bool              `yaml:"silent,omitempty" json:"silent,omitempty"`
 	// IsShell records that the entry was written in string form and therefore
 	// runs through the group's shell:. Argv-form entries always exec directly
 	// and ignore shell:, even when it is set.
@@ -238,20 +243,8 @@ func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
-			key := node.Content[i].Value
-			val := node.Content[i+1]
-			switch key {
-			case "command":
-				if val.Kind != yaml.ScalarNode {
-					return fmt.Errorf(`commands entry: "command" must be a string`)
-				}
-				cs.Command = val.Value
-			case "params":
-				if err := val.Decode(&cs.Params); err != nil {
-					return fmt.Errorf(`commands entry: "params" must be a list of strings: %w`, err)
-				}
-			default:
-				return fmt.Errorf("commands entry: unexpected key %q (use a string or a {command, params} map)", key)
+			if err := cs.unmarshalKey(node.Content[i].Value, node.Content[i+1]); err != nil {
+				return err
 			}
 		}
 		if cs.Command == "" {
@@ -262,6 +255,46 @@ func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
 		return fmt.Errorf("commands entry: must be a string or a {command, params} map")
 	}
 	return fmt.Errorf("commands entry: must be a string or a {command, params} map")
+}
+
+// unmarshalKey decodes one key of a map-form commands entry. Rejecting unknown
+// keys keeps the namespace reserved; see #32.
+func (cs *CommandSpec) unmarshalKey(key string, val *yaml.Node) error {
+	switch key {
+	case "command":
+		if val.Kind != yaml.ScalarNode {
+			return fmt.Errorf(`commands entry: "command" must be a string`)
+		}
+		cs.Command = val.Value
+	case "params":
+		if err := val.Decode(&cs.Params); err != nil {
+			return fmt.Errorf(`commands entry: "params" must be a list of strings: %w`, err)
+		}
+	case "env":
+		if err := val.Decode(&cs.Env); err != nil {
+			return fmt.Errorf(`commands entry: "env" must be a map of strings: %w`, err)
+		}
+		if _, empty := cs.Env[""]; empty {
+			return fmt.Errorf(`commands entry: "env" keys must not be empty`)
+		}
+	case "dir":
+		if val.Kind != yaml.ScalarNode {
+			return fmt.Errorf(`commands entry: "dir" must be a string`)
+		}
+		// Checked here rather than in validateGroupCommands: only the node
+		// knows the difference between dir: "" and no dir at all.
+		if val.Value == "" {
+			return fmt.Errorf(`commands entry: "dir" must not be empty`)
+		}
+		cs.Dir = val.Value
+	case "silent":
+		if err := val.Decode(&cs.Silent); err != nil {
+			return fmt.Errorf(`commands entry: "silent" must be a boolean: %w`, err)
+		}
+	default:
+		return fmt.Errorf("commands entry: unexpected key %q (use a string or a {command, params} map)", key)
+	}
+	return nil
 }
 
 // NewConfig parses YAML bytes into a Config and validates the schema.

@@ -1,0 +1,40 @@
+version: 2
+
+# A step-mode flow exercising every feature the diagram renders: parallel
+# groups in one wave, a cacheable group, a cross-wave data edge, and a
+# conditional final wave.
+groups:
+  - name: lint
+    description: "Static analysis"
+    command: golangci-lint
+    params: [run]
+
+  - name: build
+    description: "Compile the binary"
+    command: go
+    params: [build, -o, bin/app, "./..."]
+    cache:
+      reads: ["**/*.go", go.mod]
+      writes: [bin/app]
+
+  - name: test
+    description: "Unit tests"
+    command: go
+    params: [test, -race, "./..."]
+
+  - name: package
+    description: "Archive the artifact"
+    command: ./scripts/package.sh
+    params: ['{{ output "build" }}']
+
+flows:
+  ci:
+    description: "Lint and build, then test, then package on release"
+    mode: step
+    steps:
+      - run: [lint, build]
+      - run: [test]
+      - run: [package]
+        when: '{{ env "RELEASE" }}'
+
+default: ci

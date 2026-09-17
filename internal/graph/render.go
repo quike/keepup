@@ -175,8 +175,15 @@ func (m *Model) conditionalNodes() []string {
 	return out
 }
 
-// ident turns a group name into an identifier both formats accept, keeping the
-// real name for the label.
+// mermaidKeywords are parsed as syntax when they begin a line, so a group
+// named "end" would close its subgraph instead of declaring a node.
+var mermaidKeywords = map[string]struct{}{
+	"end": {}, "graph": {}, "subgraph": {}, "class": {},
+	"classdef": {}, "style": {}, "click": {}, "linkstyle": {},
+}
+
+// ident turns a group name into a Mermaid identifier, keeping the real name
+// for the label. Dot needs no equivalent: it quotes node names.
 func ident(name string) string {
 	var b strings.Builder
 	for _, r := range name {
@@ -187,7 +194,11 @@ func ident(name string) string {
 			b.WriteRune('_')
 		}
 	}
-	return b.String()
+	out := b.String()
+	if _, reserved := mermaidKeywords[strings.ToLower(out)]; reserved {
+		return out + "_"
+	}
+	return out
 }
 
 // errWriter keeps the first write error so renderers can stay linear instead

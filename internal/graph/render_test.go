@@ -109,6 +109,27 @@ default: f
 	assert.Contains(t, render(t, cfg, "f", FormatMermaid), "does a thing")
 }
 
+// A group named "end" would otherwise emit `end["end"]` inside a subgraph that
+// is itself terminated by a line reading `end`.
+func TestRender_MermaidKeywordGroupName(t *testing.T) {
+	t.Parallel()
+	cfg := `
+version: 2
+groups:
+  - name: end
+    command: echo
+    params: [done]
+flows:
+  f:
+    steps:
+      - run: [end]
+default: f
+`
+	got := render(t, cfg, "f", FormatMermaid)
+	assert.NotContains(t, got, "\n    end[", "a bare keyword id would close the subgraph")
+	assert.Contains(t, got, `"end"`, "the label still shows the real name")
+}
+
 func TestIdent(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{

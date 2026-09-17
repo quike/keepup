@@ -3,17 +3,24 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"sort"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/graph"
 )
 
 func newGraphCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
-	return &cobra.Command{
-		Use:               "graph [flow]",
-		Short:             "Emit a Mermaid diagram of the data DAG for a flow",
+	var format, output string
+	cmd := &cobra.Command{
+		Use:   "graph [flow]",
+		Short: "Emit a diagram of a flow",
+		Long: "Render a flow as a Mermaid or Graphviz diagram. Step-mode waves are drawn " +
+			"as labeled boxes, conditional groups dashed, and cacheable groups as cylinders.\n\n" +
+			"Pipe dot through Graphviz for an image:\n" +
+			"  keepup graph ci --format dot | dot -Tsvg > ci.svg",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeFlows(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -27,86 +34,38 @@ func newGraphCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 			if flowName == "" {
 				return fmt.Errorf("no flow specified and no default declared")
 			}
-			flow, ok := opts.cfg.Flows[flowName]
-			if !ok {
-				return fmt.Errorf("flow %q not found", flowName)
+			model, err := graph.Build(opts.cfg, flowName)
+			if err != nil {
+				return err
 			}
-			return emitMermaid(stdout, flowName, opts.cfg, &flow)
+			w, closeFn, err := openGraphWriter(output, stdout)
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			return graph.Render(w, graph.Format(format), model)
 		},
 	}
+	cmd.Flags().StringVarP(&format, "format", "f", string(graph.FormatMermaid),
+		"Diagram format: "+strings.Join(graph.Formats(), " or "))
+	cmd.Flags().StringVarP(&output, "output", "o", "",
+		"Write the diagram to this file ('-' or empty for stdout)")
+	_ = cmd.RegisterFlagCompletionFunc("format",
+		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return graph.Formats(), cobra.ShellCompDirectiveNoFileComp
+		})
+	return cmd
 }
 
-// emitMermaid writes a Mermaid graph TD definition. Nodes are groups in the
-// flow; edges go from referenced group → referencing group (data direction).
-// Step boundaries are not drawn — step mode and dag mode produce the same
-// data-flow picture, which is the semantically meaningful one.
-func emitMermaid(out io.Writer, flowName string, cfg *config.Config, flow *config.Flow) error {
-	members := flow.Members()
-	memberSet := make(map[string]struct{}, len(members))
-	for _, m := range members {
-		memberSet[m] = struct{}{}
+// openGraphWriter resolves --output: empty or "-" means stdout, otherwise a
+// file (truncated). The returned closer is a no-op for stdout.
+func openGraphWriter(path string, stdout io.Writer) (io.Writer, func(), error) {
+	if path == "" || path == "-" {
+		return stdout, func() {}, nil
 	}
-
-	if _, err := fmt.Fprintf(out, "%%%% flow: %s (mode: %s)\ngraph TD\n", flowName, flow.Mode); err != nil {
-		return err
+	f, err := os.Create(filepath.Clean(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open graph file %q: %w", path, err)
 	}
-
-	// Declare nodes in declaration order so output is stable.
-	for _, m := range members {
-		g := cfg.GroupByName(m)
-		label := m
-		if g != nil && g.Description != "" {
-			label = fmt.Sprintf("%s<br/>%s", m, g.Description)
-		}
-		if _, err := fmt.Fprintf(out, "  %s[%q]\n", nodeID(m), label); err != nil {
-			return err
-		}
-	}
-
-	// Collect edges, sorted for determinism.
-	type edge struct{ from, to string }
-	edges := make([]edge, 0)
-	for _, m := range members {
-		g := cfg.GroupByName(m)
-		seen := make(map[string]struct{})
-		refs, _ := config.ExtractRefs(g) // config already validated these templates
-		for _, ref := range refs {
-			if _, in := memberSet[ref]; !in {
-				continue
-			}
-			if _, dup := seen[ref]; dup {
-				continue
-			}
-			seen[ref] = struct{}{}
-			edges = append(edges, edge{from: ref, to: m})
-		}
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].from != edges[j].from {
-			return edges[i].from < edges[j].from
-		}
-		return edges[i].to < edges[j].to
-	})
-	for _, e := range edges {
-		if _, err := fmt.Fprintf(out, "  %s --> %s\n", nodeID(e.from), nodeID(e.to)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// nodeID turns a group name into a Mermaid-safe identifier. Hyphens are
-// replaced with underscores; other characters are preserved.
-func nodeID(name string) string {
-	b := make([]byte, 0, len(name))
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b = append(b, c)
-		default:
-			b = append(b, '_')
-		}
-	}
-	return string(b)
+	return f, func() { _ = f.Close() }, nil
 }

@@ -1,0 +1,11 @@
+%% flow: ci (mode: dag)
+graph TD
+  build[("build<br/>Compile the binary")]
+  test["test<br/>Unit tests"]
+  deploy["deploy<br/>Ship it"]
+  notify["notify<br/>Announce the release"]
+  build --> test
+  deploy --> notify
+  test --> deploy
+  classDef conditional stroke-dasharray: 5 5
+  class deploy conditional

@@ -1,0 +1,38 @@
+version: 2
+
+# A dag-mode flow where deploy's when: predicate reads test's output. That
+# reference is a real scheduling dependency, so the diagram must draw it.
+groups:
+  - name: build
+    description: "Compile the binary"
+    command: go
+    params: [build, "./..."]
+    cache:
+      reads: ["**/*.go"]
+
+  - name: test
+    description: "Unit tests"
+    command: go
+    params: [test, '{{ output "build" }}']
+
+  - name: deploy
+    description: "Ship it"
+    command: ./scripts/deploy.sh
+
+  - name: notify
+    description: "Announce the release"
+    command: ./scripts/notify.sh
+    params: ['{{ output "deploy" }}']
+
+flows:
+  ci:
+    description: "Build, test, deploy when tests pass, then notify"
+    mode: dag
+    run:
+      - build
+      - test
+      - group: deploy
+        when: '{{ eq (output "test") "pass" }}'
+      - notify
+
+default: ci

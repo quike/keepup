@@ -660,7 +660,7 @@ keepup watch [flow]          # re-run a flow when its cache.reads inputs change
 keepup list                  # show declared flows + descriptions
 keepup list groups           # show declared groups
 keepup validate              # parse + validate; no execution
-keepup graph [flow]          # emit a Mermaid diagram of the data DAG
+keepup graph [flow]          # diagram a flow (-f mermaid|dot, -o file)
 keepup migrate <path>        # convert a legacy v1 file to v2
 keepup version
 ```
@@ -686,9 +686,34 @@ Global flags:
 | `--no-cache` | Ignore cached results and run every group (entries still refresh). |
 | `--events <path>` | Write a newline-delimited JSON event stream (`flow.start`/`group.end`/… with status + durationMs) to a file, or `-` for stdout. |
 
-`keepup graph <flow>` prints a Mermaid `graph TD` showing the data DAG that
-emerges from the `{{ output.X }}` references — useful as a sanity check
-regardless of whether you use step or dag mode.
+### Diagrams
+
+`keepup graph <flow>` renders the flow. It reads the same plan the engine
+schedules, so the picture cannot disagree with what runs.
+
+| Flag              | Effect                                                      |
+| ----------------- | ----------------------------------------------------------- |
+| `-f, --format`    | `mermaid` (default) or `dot`                                 |
+| `-o, --output`    | Write to a file; `-` or omitted means stdout                 |
+
+Mermaid renders natively in GitHub markdown. For an image, pipe dot through
+Graphviz:
+
+```sh
+keepup graph ci --format dot | dot -Tsvg > docs/ci.svg
+```
+
+What the diagram shows:
+
+- **Step mode** draws each wave as a labeled box with a dashed barrier between
+  them, so the ordering and its synchronization points are visible. Data edges
+  are still drawn inside and across waves — they do not set the order there,
+  but they explain it.
+- **Dag mode** draws the dependency edges the scheduler enforces, including
+  those introduced by a `when:` predicate reading another group's output.
+- **Conditional** groups (dag `when:`) are dashed; a `when:`-gated step says so
+  in its wave label.
+- **Cacheable** groups — those declaring `cache:` — are drawn as cylinders.
 
 ---
 

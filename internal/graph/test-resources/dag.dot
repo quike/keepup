@@ -1,0 +1,12 @@
+// flow: ci (mode: dag)
+digraph "ci" {
+  rankdir=TB;
+  node [shape=box];
+  "build" [label="build\nCompile the binary", shape=cylinder];
+  "test" [label="test\nUnit tests"];
+  "deploy" [label="deploy\nShip it", style=dashed];
+  "notify" [label="notify\nAnnounce the release"];
+  "build" -> "test";
+  "deploy" -> "notify";
+  "test" -> "deploy";
+}

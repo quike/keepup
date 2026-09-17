@@ -1,0 +1,23 @@
+// flow: ci (mode: step)
+digraph "ci" {
+  rankdir=TB;
+  node [shape=box];
+  compound=true;
+  subgraph cluster_wave1 {
+    label="step 1";
+    "lint" [label="lint\nStatic analysis"];
+    "build" [label="build\nCompile the binary", shape=cylinder];
+  }
+  subgraph cluster_wave2 {
+    label="step 2";
+    "test" [label="test\nUnit tests"];
+  }
+  subgraph cluster_wave3 {
+    label="step 3 (conditional)";
+    style=dashed;
+    "package" [label="package\nArchive the artifact"];
+  }
+  "lint" -> "test" [ltail=cluster_wave1, lhead=cluster_wave2, style=dashed];
+  "test" -> "package" [ltail=cluster_wave2, lhead=cluster_wave3, style=dashed];
+  "build" -> "package";
+}

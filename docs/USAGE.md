@@ -58,7 +58,7 @@ keepup watch [flow]       # re-run a flow when its cache.reads inputs change
 keepup list               # list flows (default starred)
 keepup list groups        # list groups
 keepup validate           # parse & reference-check; no execution
-keepup graph [flow]       # emit a Mermaid diagram of the data DAG
+keepup graph [flow]       # diagram a flow (-f mermaid|dot, -o file)
 keepup migrate <path>     # convert a legacy v1 file to v2
 keepup completion <shell> # print a shell completion script (see below)
 keepup version

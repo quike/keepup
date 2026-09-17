@@ -1,0 +1,15 @@
+%% flow: ci (mode: step)
+graph TD
+  subgraph wave1["step 1"]
+    lint["lint<br/>Static analysis"]
+    build[("build<br/>Compile the binary")]
+  end
+  subgraph wave2["step 2"]
+    test["test<br/>Unit tests"]
+  end
+  subgraph wave3["step 3 (conditional)"]
+    package["package<br/>Archive the artifact"]
+  end
+  wave1 -.-> wave2
+  wave2 -.-> wave3
+  build --> package

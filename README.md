@@ -33,7 +33,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **Timeouts & retries**   | Per-step / per-flow `timeout` and `retries` envelope around each command attempt, with backoff.                             |
 | **Safe execution**       | Commands run as real argv by default (no shell injection); opt into a shell per group with `shell:`.                        |
 | **Env layering**         | Global `env:` plus per-group overrides, merged over the process environment.                                                |
-| **Discoverability**      | `keepup list`, `keepup validate`, and `keepup graph` (Mermaid diagram of the data DAG). `run`/`watch`/`graph` tab-complete flow names, with descriptions, from the config on the command line. |
+| **Discoverability**      | `keepup list`, `keepup validate`, and `keepup graph` (Mermaid or Graphviz diagram: step waves, conditional and cacheable groups). `run`/`watch`/`graph` tab-complete flow names, with descriptions, from the config on the command line. |
 | **JSON events**          | `keepup run --events` and `keepup watch --events` emit a newline-delimited JSON stream for CI tooling. `watch` adds a `watch.trigger {"files":[...]}` event before each debounced re-run; the banner writes to stderr so `--events -` yields pure JSON on stdout. |
 | **Migration**            | `keepup migrate` converts legacy v1 configs to v2 and validates the result.                                                 |
 
@@ -67,7 +67,7 @@ keepup run            # run the default flow
 keepup run ci         # run a named flow
 keepup watch dev      # re-run on file changes
 keepup list           # show flows; `list groups` shows groups
-keepup graph ci       # Mermaid diagram of the data DAG
+keepup graph ci       # diagram the flow (waves, conditionals, caches)
 keepup run <TAB>      # complete flow names from the current config
 ```
 

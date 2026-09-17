@@ -68,16 +68,3 @@ func TestGraphCmd_UnknownFlow(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
-
-func TestNodeID(t *testing.T) {
-	t.Parallel()
-	tests := map[string]string{
-		"build":       "build",
-		"global-env":  "global_env",
-		"build:linux": "build_linux",
-		"a.b.c":       "a_b_c",
-	}
-	for in, want := range tests {
-		assert.Equal(t, want, nodeID(in), "input=%q", in)
-	}
-}

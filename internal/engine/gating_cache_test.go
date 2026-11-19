@@ -197,3 +197,50 @@ func TestEngine_Cache_DryRunSkipsGatingAndCache(t *testing.T) {
 	assert.Empty(t, r.calls)
 	assert.Empty(t, p.calls, "dry-run must not evaluate predicates")
 }
+
+func TestEngine_Cache_DeclaredEnvChangeBusts(t *testing.T) {
+	tests := []struct {
+		name    string
+		withEnv func(cfg *config.Config, goos string)
+	}{
+		{"global env", func(cfg *config.Config, goos string) { cfg.Env = map[string]string{"GOOS": goos} }},
+		{"group env", func(cfg *config.Config, goos string) { cfg.Groups[0].Env = map[string]string{"GOOS": goos} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			readPath := filepath.Join(dir, "main.go")
+			require.NoError(t, writeF(readPath, "package main\n"))
+			store := cache.NewFileStore(filepath.Join(dir, "cache"))
+
+			linux := cacheGroupCfg(t, readPath)
+			tt.withEnv(linux, "linux")
+			r1 := &fakeRunner{outputs: map[string]string{"build": "linux\n"}}
+			require.NoError(t, New(linux, WithRunner(r1), WithCache(store)).RunFlow(context.Background(), "f"))
+
+			darwin := cacheGroupCfg(t, readPath)
+			tt.withEnv(darwin, "darwin")
+			r2 := &fakeRunner{outputs: map[string]string{"build": "darwin\n"}}
+			require.NoError(t, New(darwin, WithRunner(r2), WithCache(store)).RunFlow(context.Background(), "f"))
+			assert.Equal(t, []string{"build:"}, r2.calls, "changed %s must re-run, not replay stale output", tt.name)
+		})
+	}
+}
+
+// A reads glob broad enough to match the cache directory must not let the
+// store's own entries feed the fingerprint, or every save busts the next run.
+func TestEngine_Cache_ReadsGlobMatchingCacheDirStillHits(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, writeF("config.json", "{}"))
+	cfg := cacheGroupCfg(t, "**/*.json") // default cache-dir holds <group>.json
+
+	r1 := &fakeRunner{outputs: map[string]string{"build": "x\n"}}
+	require.NoError(t, New(cfg, WithRunner(r1)).RunFlow(context.Background(), "f"))
+	require.Equal(t, []string{"build:"}, r1.calls, "first run populates the cache")
+
+	for run := 2; run <= 3; run++ {
+		r := &fakeRunner{outputs: map[string]string{"build": "x\n"}}
+		require.NoError(t, New(cfg, WithRunner(r)).RunFlow(context.Background(), "f"))
+		assert.Empty(t, r.calls, "run %d must hit the cache", run)
+	}
+}

@@ -27,6 +27,7 @@ type Engine struct {
 	outputs        OutputStore
 	expander       template.Expander
 	cache          cache.Store
+	cacheDir       string
 	emitter        Emitter
 	log            logger.Logger
 	maxConcurrency int
@@ -98,6 +99,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 		outputs:        NewMemoryOutputStore(),
 		expander:       template.NewExpander(),
 		cache:          cache.NewFileStore(cacheDir),
+		cacheDir:       cacheDir,
 		emitter:        nopEmitter{},
 		log:            logger.Nop(),
 		maxConcurrency: cfg.Settings.MaxConcurrency,
@@ -483,7 +485,7 @@ func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec)
 	if e.noCache || group.Cache == nil {
 		return nil, false
 	}
-	fp, err := cache.Compute(group.Cache, group.Shell, commands)
+	fp, err := e.fingerprint(group, commands)
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; running group", "group", group.Name, "err", err.Error())
 		return nil, false
@@ -498,6 +500,19 @@ func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec)
 	return entry, true
 }
 
+// fingerprint computes the group's cache fingerprint over the same declared
+// env the runner will use, ignoring anything under the cache dir.
+func (e *Engine) fingerprint(group *config.Group, commands []config.CommandSpec) (string, error) {
+	return cache.Compute(cache.Inputs{
+		Spec:      group.Cache,
+		Shell:     group.Shell,
+		GlobalEnv: e.cfg.Env,
+		GroupEnv:  group.Env,
+		Commands:  commands,
+		CacheDir:  e.cacheDir,
+	})
+}
+
 // cacheStore persists a fresh cache entry after a successful run.
 func (e *Engine) cacheStore(group *config.Group, commands []config.CommandSpec, out *result.RunResult) {
 	if e.noCache || group.Cache == nil {
@@ -507,7 +522,7 @@ func (e *Engine) cacheStore(group *config.Group, commands []config.CommandSpec, 
 	// have rewritten its own cache.reads inputs (e.g. a formatter), and the
 	// stored fingerprint must reflect the post-run input state so the next
 	// run can hit.
-	fp, err := cache.Compute(group.Cache, group.Shell, commands)
+	fp, err := e.fingerprint(group, commands)
 	if err != nil {
 		e.log.Warn("cache fingerprint failed; not caching", "group", group.Name, "err", err.Error())
 		return

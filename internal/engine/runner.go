@@ -121,8 +121,8 @@ func (r *ShellRunner) buildCmd(ctx context.Context, g *config.Group, spec config
 	} else {
 		cmd = exec.CommandContext(ctx, spec.Command, spec.Params...) //nolint:gosec // user-declared command
 	}
-	// Layering: process < global env: < group env: < command env:.
-	cmd.Env = mergeEnvs(os.Environ(), globalEnv, g.Env, spec.Env)
+	// The declared env (global < group < command) layers over the process env.
+	cmd.Env = mergeEnvs(os.Environ(), config.DeclaredEnv(globalEnv, g.Env, spec.Env))
 	cmd.Dir = spec.Dir
 	return cmd
 }

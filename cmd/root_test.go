@@ -161,11 +161,12 @@ func TestValidateCmd_ReportsUnknownKey(t *testing.T) {
 func TestVerboseDumpsConfig(t *testing.T) {
 	t.Parallel()
 	cfgPath := writeTempConfig(t, minimalCfg)
-	var out bytes.Buffer
-	cmd := newRootCmd(&out, &out)
+	var stdout, stderr bytes.Buffer
+	cmd := newRootCmd(&stdout, &stderr)
 	cmd.SetArgs([]string{"run", "--config", cfgPath, "--dry-run", "--verbose"})
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "# config:")
+	assert.Contains(t, stderr.String(), "# config:", "the dump is a diagnostic: stderr")
+	assert.NotContains(t, stdout.String(), "# config:")
 }
 
 func TestDefaultConfigPath(t *testing.T) {

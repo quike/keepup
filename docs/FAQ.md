@@ -485,7 +485,7 @@ Yes. `keepup watch --events <path|->` emits the same `flow.start` / `group.start
 {"event":"watch.trigger","flow":"ci","files":["src/main.go","src/util.go"]}
 ```
 
-The initial run on startup emits no `watch.trigger` — the leading `flow.start` marks it. The `"watching N dir(s)…"` banner writes to stderr, so `--events -` yields pure JSON on stdout.
+The initial run on startup emits no `watch.trigger` — the leading `flow.start` marks it. With `--events -`, stdout carries only JSON: the `"watching N dir(s)…"` banner, keepup's logs, and command output all go to stderr.
 
 ---
 
@@ -578,9 +578,10 @@ It's independent of the human/JSON logging (`settings.logging`) — logs are for
 people, events are for tooling. If you only run keepup by hand in a terminal you
 don't need it; it shines when something *else* watches your runs.
 
-Note: use `--events run.jsonl` (a file) or `--events -` (stdout). On stdout the
-events mix with your commands' own output, so a file is usually cleaner for real
-use.
+Note: use `--events run.jsonl` (a file) or `--events -` (stdout). With
+`--events -`, stdout carries only events — keepup's logs and your commands' own
+output move to stderr — so every stdout line is a JSON object you can pipe
+straight into `jq`.
 
 ### How do I see what flows and groups are available?
 

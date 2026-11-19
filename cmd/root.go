@@ -117,28 +117,23 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 		Short: "Execute a flow (uses the configured default when no flow is given)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.load(cmd.OutOrStdout()); err != nil {
+			if err := opts.load(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			var flowName string
 			if len(args) == 1 {
 				flowName = args[0]
 			}
-			engineOpts := []engine.Option{
-				engine.WithLogger(opts.log),
-				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
-				engine.WithNoCache(opts.noCache),
-				engine.WithProcessGroups(opts.procGroups),
-			}
+			var emitter engine.Emitter
 			if eventsPath != "" {
 				w, closeFn, err := openEventsWriter(eventsPath, cmd.OutOrStdout())
 				if err != nil {
 					return err
 				}
 				defer closeFn()
-				engineOpts = append(engineOpts, engine.WithEmitter(engine.NewJSONEmitter(w)))
+				emitter = engine.NewJSONEmitter(w)
 			}
-			e := engine.New(opts.cfg, engineOpts...)
+			e := engine.New(opts.cfg, opts.engineOptions(newChildOutput(cmd, eventsPath), emitter)...)
 			return e.RunFlow(cmd.Context(), flowName)
 		},
 	}
@@ -148,10 +143,51 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 	return cmd
 }
 
+// eventsToStdout is the --events value that streams events to stdout.
+const eventsToStdout = "-"
+
+// engineOptions assembles the engine options run and watch share. A nil
+// emitter keeps the engine's discard default. The engine builds its own runner;
+// the CLI only says where that runner's live output goes.
+func (o *runtimeOpts) engineOptions(out childOutput, emitter engine.Emitter) []engine.Option {
+	engineOpts := []engine.Option{
+		engine.WithLogger(o.log),
+		engine.WithOutput(out.stdout, out.stderr),
+		engine.WithDryRun(o.dryRun || o.cfg.Settings.DryRun),
+		engine.WithNoCache(o.noCache),
+		engine.WithProcessGroups(o.procGroups),
+	}
+	if emitter != nil {
+		engineOpts = append(engineOpts, engine.WithEmitter(emitter))
+	}
+	return engineOpts
+}
+
+// childOutput is where the commands keepup runs write their live output.
+type childOutput struct{ stdout, stderr io.Writer }
+
+// newChildOutput wires child output to the cobra command's streams.
+func newChildOutput(cmd *cobra.Command, eventsPath string) childOutput {
+	return childOutput{
+		stdout: childStdout(eventsPath, cmd.OutOrStdout(), cmd.ErrOrStderr()),
+		stderr: cmd.ErrOrStderr(),
+	}
+}
+
+// childStdout picks where a command's stdout goes. It is normally the CLI's
+// stdout, so piping keepup pipes the command output; --events - claims stdout
+// for the NDJSON stream, so child stdout joins stderr instead.
+func childStdout(eventsPath string, stdout, stderr io.Writer) io.Writer {
+	if eventsPath == eventsToStdout {
+		return stderr
+	}
+	return stdout
+}
+
 // openEventsWriter resolves the --events target: "-" means stdout, otherwise a
 // file (truncated). The returned closer is a no-op for stdout.
 func openEventsWriter(path string, stdout io.Writer) (io.Writer, func(), error) {
-	if path == "-" {
+	if path == eventsToStdout {
 		return stdout, func() {}, nil
 	}
 	f, err := os.Create(filepath.Clean(path))
@@ -168,7 +204,7 @@ func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{listKindFlows, listKindGroups},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.load(cmd.OutOrStdout()); err != nil {
+			if err := opts.load(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			kind := listKindFlows
@@ -192,7 +228,7 @@ func newValidateCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 		Use:   validateCmdUse,
 		Short: "Parse and validate the config file without running anything",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := opts.load(cmd.OutOrStdout()); err != nil {
+			if err := opts.load(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			fmt.Fprintf(stdout, "%s: ok (%d groups, %d flows)\n",
@@ -241,8 +277,11 @@ func printGroups(out io.Writer, cfg *config.Config) error {
 	return nil
 }
 
-// load reads the config file and initializes the logger.
-func (o *runtimeOpts) load(out io.Writer) error {
+// load reads the config file and initializes the logger. Diagnostics (keepup's
+// logs and the --verbose config dump) go to diag, the CLI's stderr, never to
+// stdout: stdout is reserved for command output, list/validate/graph results,
+// and --events -.
+func (o *runtimeOpts) load(diag io.Writer) error {
 	path := o.configFile
 	if path == "" {
 		var err error
@@ -257,10 +296,10 @@ func (o *runtimeOpts) load(out io.Writer) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 	o.cfg = cfg
-	o.log = logger.New(cfg.Settings.Logging.Level, cfg.Settings.Logging.Pretty)
+	o.log = logger.NewWithWriter(diag, cfg.Settings.Logging.Level, cfg.Settings.Logging.Pretty)
 
 	if o.verbose {
-		if err := dumpConfig(out, path, cfg); err != nil {
+		if err := dumpConfig(diag, path, cfg); err != nil {
 			return fmt.Errorf("dump config: %w", err)
 		}
 	}

@@ -7,6 +7,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -32,6 +33,8 @@ type Engine struct {
 	cacheDir       string
 	emitter        Emitter
 	log            logger.Logger
+	stdout         io.Writer
+	stderr         io.Writer
 	maxConcurrency int
 	dryRun         bool
 	noCache        bool
@@ -45,7 +48,7 @@ const DefaultRetryBackoff = 250 * time.Millisecond
 // Option configures an Engine.
 type Option func(*Engine)
 
-// WithRunner overrides the default ShellRunner.
+// WithRunner replaces the default ShellRunner; intended for test doubles.
 func WithRunner(r Runner) Option { return func(e *Engine) { e.runner = r } }
 
 // WithProber overrides the default ShellProber used for skip-if/require.
@@ -88,6 +91,13 @@ func WithProcessEnv(environ []string) Option {
 	return func(e *Engine) { e.processEnv = parseEnviron(environ) }
 }
 
+// WithOutput sets where the default ShellRunner streams live child stdout and
+// stderr (default: the process stdio). It has no effect when WithRunner
+// supplies a runner.
+func WithOutput(stdout, stderr io.Writer) Option {
+	return func(e *Engine) { e.stdout, e.stderr = stdout, stderr }
+}
+
 // WithRetryBackoff overrides the base retry backoff (delay for attempt N is
 // base*N). Primarily useful in tests to avoid real sleeps.
 func WithRetryBackoff(d time.Duration) Option { return func(e *Engine) { e.retryBackoff = d } }
@@ -116,6 +126,8 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 		maxConcurrency: cfg.Settings.MaxConcurrency,
 		dryRun:         cfg.Settings.DryRun,
 		retryBackoff:   DefaultRetryBackoff,
+		stdout:         os.Stdout,
+		stderr:         os.Stderr,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -131,6 +143,7 @@ func (e *Engine) applyDefaultProcessCollaborators() {
 	if e.runner == nil {
 		r := NewShellRunner()
 		r.Groups = e.procGroups
+		r.Stdout, r.Stderr = e.stdout, e.stderr
 		e.runner = r
 	}
 	if e.prober == nil {
@@ -200,6 +213,20 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 	// impossible; treat any residual error as "no timeout".
 	d, _ := time.ParseDuration(timeout)
 	return envelope{timeout: d, retries: retries}
+}
+
+// skipReasonWhen is the skip reason reported when a when: predicate renders
+// falsey, in both step and dag mode.
+const skipReasonWhen = "when"
+
+// skipGroup records a group the scheduler decided not to run: it publishes a
+// skipped RunResult so downstream references resolve, logs the reason, and
+// closes the group on the event stream with group.end {status: skipped}.
+// Step and dag mode share it so their skip events cannot drift apart.
+func (e *Engine) skipGroup(name, reason string) {
+	e.outputs.Set(name, result.RunResult{Status: result.StatusSkipped})
+	e.log.Info("group skipped", "group", name, "reason", reason)
+	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped, Reason: reason})
 }
 
 // expandCommands renders every command in the group's normalized list against

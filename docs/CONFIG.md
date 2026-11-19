@@ -60,7 +60,7 @@ settings:
 | `max-concurrency` | `0` (unbounded) | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
 | `cache-dir`       | `.keepup-cache` | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)).                                    |
 | `logging.level`   | `info`          | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
-| `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line.                                                          |
+| `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line. Logs always go to stderr (see [Output streams](#output-streams)). |
 
 ---
 
@@ -563,8 +563,11 @@ flows:
 and sprig) and is **falsey** — and therefore skips the step — when it renders
 to `""`, `false`, `0`, `no`, or `off`. It is evaluated against the outputs of
 **earlier** steps plus the environment (process environment overlaid by
-global `env:`, so `BRANCH` above can come from your CI runner); referencing a same-step or later group
-is rejected at config-load. A skipped step's groups produce no output.
+global `env:`, so `BRANCH` above can come from your CI runner); referencing a
+same-step or later group is rejected at config-load. A skipped step's groups do
+not run: each is stored with `Status: "skipped"` and empty output, and closed on
+the event stream with `{"event":"group.end","status":"skipped","reason":"when"}`,
+exactly like a dag-mode `when:` skip.
 
 ### DAG mode
 
@@ -758,7 +761,7 @@ Global flags:
 | --------------------- | -------------------------------------------------------------------------- |
 | `-c, --config <path>` | Override the config-file path (defaults to `~/.config/keepup/keepup.yml`). |
 | `-d, --dry-run`       | Skip the runner; log what would run. Stacks on top of `settings.dry-run`.  |
-| `-v, --verbose`       | Dump the parsed config before running.                                     |
+| `-v, --verbose`       | Dump the parsed config (to stderr) before running.                         |
 
 `run`-only flags:
 
@@ -766,6 +769,20 @@ Global flags:
 | ------------ | ------------------------------------------------------------------ |
 | `--no-cache` | Ignore cached results and run every group (entries still refresh). |
 | `--events <path>` | Write a newline-delimited JSON event stream (`flow.start`/`group.end`/… with status + durationMs) to a file, or `-` for stdout. |
+
+### Output streams
+
+keepup keeps stdout for data and stderr for diagnostics:
+
+| Stream | Carries                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------ |
+| stdout | Command output, `list` / `validate` / `graph` results, and the event stream with `--events -`. |
+| stderr | keepup's logs, the `--verbose` config dump, the `watch` banner, and errors.                      |
+
+With `--events -` (on `run` or `watch`) stdout belongs to the event stream, so
+your commands' stdout is redirected to stderr as well: every stdout line is
+then one JSON object. Without it, command stdout stays on stdout, so
+`keepup run gen > out.txt` captures what the commands print and nothing else.
 
 ### Diagrams
 

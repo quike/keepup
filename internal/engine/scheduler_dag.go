@@ -97,7 +97,7 @@ func (s *dagScheduler) decide(name string) decision {
 		return decisionErr
 	}
 	if !run {
-		s.skipReason[name] = "when"
+		s.skipReason[name] = skipReasonWhen
 		return decisionSkip
 	}
 	return decisionRun
@@ -116,8 +116,7 @@ func (s *dagScheduler) drainReady() {
 			return
 		case decisionSkip:
 			s.skipped[name] = true
-			s.engine.outputs.Set(name, result.RunResult{Status: result.StatusSkipped})
-			s.engine.emitGroupSkipped(name, s.skipReason[name])
+			s.engine.skipGroup(name, s.skipReason[name])
 			s.onDone(name, true)
 		case decisionRun:
 			s.launch(name)
@@ -222,13 +221,6 @@ func (s *dagScheduler) pump(gctx context.Context, doneCh <-chan string) {
 			return
 		}
 	}
-}
-
-// emitGroupSkipped reports a skipped dag group: a log line carrying the reason
-// and a group.end event marking it skipped on the structured stream.
-func (e *Engine) emitGroupSkipped(name, reason string) {
-	e.log.Info("group skipped", "group", name, "reason", reason)
-	e.emitter.Emit(Event{Event: EventGroupEnd, Group: name, Status: StatusSkipped, Reason: reason})
 }
 
 func cloneSnapshot(m map[string]result.RunResult) map[string]result.RunResult {

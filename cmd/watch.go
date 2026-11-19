@@ -36,18 +36,15 @@ func resolveWatchFlow(cmd *cobra.Command, args []string, opts *runtimeOpts) (str
 	if err := opts.load(cmd.ErrOrStderr()); err != nil {
 		return "", config.Flow{}, err
 	}
-	flowName := opts.cfg.Default
+	var requested string
 	if len(args) == 1 {
-		flowName = args[0]
+		requested = args[0]
 	}
-	if flowName == "" {
-		return "", config.Flow{}, fmt.Errorf("no flow specified and no default declared")
+	flowName, err := opts.cfg.ResolveFlow(requested)
+	if err != nil {
+		return "", config.Flow{}, err
 	}
-	flow, ok := opts.cfg.Flows[flowName]
-	if !ok {
-		return "", config.Flow{}, fmt.Errorf("flow %q not found", flowName)
-	}
-	return flowName, flow, nil
+	return flowName, opts.cfg.Flows[flowName], nil
 }
 
 // watchSourceSetup bundles the fsnotify source, the dir count, and a cleanup

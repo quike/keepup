@@ -120,8 +120,10 @@ func TestEngine_MultiCommand_StopsOnFirstFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "command 2 of 3")
 	assert.Equal(t, []string{"alpha", "beta line"}, r.commandSeq(), "third command must not run")
-	_, ok := e.Outputs().Get("m")
-	assert.False(t, ok, "failed group stores no output")
+	got, ok := e.Outputs().Get("m")
+	require.True(t, ok, "a failed group is stored")
+	assert.Equal(t, result.StatusFailed, got.Status)
+	assert.Equal(t, "A\n", got.Output, "output up to the failure is kept")
 }
 
 func TestRunSequence_AggregatesExitCodeAndOutput(t *testing.T) {

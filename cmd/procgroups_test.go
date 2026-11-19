@@ -61,7 +61,7 @@ func TestRunCmd_RegistersProcessGroups(t *testing.T) {
 	cfgPath := writeTempConfig(t, sleeperCfg)
 	groups := engine.NewProcessGroups()
 	var out bytes.Buffer
-	root := newRootCmdWithProcessGroups(&out, &out, groups)
+	root := buildRootCmd(&runtimeOpts{procGroups: groups}, &out, &out)
 	root.SetArgs([]string{"run", "--no-cache", "--config", cfgPath})
 
 	requireKilledViaTracker(t, groups, root.Execute)

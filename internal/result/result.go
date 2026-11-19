@@ -9,8 +9,8 @@ package result
 //
 // The zero value is meaningful: Status == "" appears only for groups that
 // were never declared or never reached the store. Every declared, evaluated
-// group ends up with one of the four known statuses ("ok", "skipped",
-// "cached", "dry-run").
+// group ends up with one of the five known statuses ("ok", "failed",
+// "skipped", "cached", "dry-run").
 type RunResult struct {
 	// Stdout is the captured stdout only (independent of Stderr).
 	Stdout string `json:"stdout,omitempty"`
@@ -20,9 +20,9 @@ type RunResult struct {
 	// matching the historical (pre-structured-outputs) capture behavior.
 	// The `output "x"` template function returns strings.TrimSpace(Output).
 	Output string `json:"output,omitempty"`
-	// ExitCode is the process exit code. Still always 0 in stored results: a
-	// hard failure aborts the flow before storage, and a continue-on-error
-	// entry's failure is tolerated rather than recorded.
+	// ExitCode is the exit code of the first failing command: non-zero only on
+	// a "failed" result (-1 when a signal killed the process). A
+	// continue-on-error entry's failure is tolerated rather than recorded.
 	ExitCode int `json:"exitCode,omitempty"`
 	// DurationMs is wall-clock milliseconds for the command run. 0 for
 	// skipped and cache-hit groups.
@@ -34,7 +34,7 @@ type RunResult struct {
 
 // Status values a RunResult may carry. External Runner implementations set
 // StatusOK on a normal run; the engine overrides with the appropriate value
-// at storage time for cached / skipped / dry-run paths.
+// at storage time for failed / cached / skipped / dry-run paths.
 //
 // Note: these are intentionally distinct from the event-layer status
 // constants in internal/engine/events.go (e.g. "cache-hit" vs "cached"). The
@@ -42,6 +42,7 @@ type RunResult struct {
 // model layer here is what user templates read via `(out "x").Status`.
 const (
 	StatusOK      = "ok"
+	StatusFailed  = "failed"
 	StatusSkipped = "skipped"
 	StatusCached  = "cached"
 	StatusDryRun  = "dry-run"

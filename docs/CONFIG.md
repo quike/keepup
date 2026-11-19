@@ -406,9 +406,9 @@ Fields (Go-style capital case):
 | `Stdout`    | string | stdout only                                                                       |
 | `Stderr`    | string | stderr only                                                                       |
 | `Output`    | string | chronologically merged stdout+stderr; `output "x"` returns its trimmed form       |
-| `ExitCode`  | int    | 0 for ok; non-zero values appear only once soft-fail ships                        |
+| `ExitCode`  | int    | 0 for ok; the first failing command's exit code for failed                        |
 | `DurationMs`| int64  | wall-clock milliseconds; 0 for skipped and cache-hit groups                       |
-| `Status`    | string | one of `"ok"`, `"skipped"`, `"cached"`, `"dry-run"`                               |
+| `Status`    | string | one of `"ok"`, `"failed"`, `"skipped"`, `"cached"`, `"dry-run"`                   |
 
 Examples:
 
@@ -768,7 +768,8 @@ Global flags:
 | Flag         | Purpose                                                            |
 | ------------ | ------------------------------------------------------------------ |
 | `--no-cache` | Ignore cached results and run every group (entries still refresh). |
-| `--events <path>` | Write a newline-delimited JSON event stream (`flow.start`/`group.end`/… with status + durationMs) to a file, or `-` for stdout. |
+| `--events <path>` | Write a newline-delimited JSON event stream (`flow.start`/`group.end`/… with status, durationMs, and exitCode) to a file, or `-` for stdout. |
+| `--exit-code` | Exit with the failing command's own exit code instead of 1 (see [USAGE › Exit codes](USAGE.md#exit-codes)). |
 
 ### Output streams
 

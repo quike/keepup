@@ -26,6 +26,9 @@ const (
 )
 
 // Event is a single structured run event for machine consumption (CI tooling).
+// ExitCode is set on group.end only for a group whose commands ran (ok or
+// failed), so a 0 is still reported; skipped, cache-hit and dry-run groups
+// omit it.
 type Event struct {
 	Event      string    `json:"event"`
 	Flow       string    `json:"flow,omitempty"`
@@ -34,6 +37,7 @@ type Event struct {
 	Status     string    `json:"status,omitempty"`
 	DurationMS int64     `json:"durationMs,omitempty"`
 	Err        string    `json:"err,omitempty"`
+	ExitCode   *int      `json:"exitCode,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
 	Files      []string  `json:"files,omitempty"`
 	Time       time.Time `json:"time"`

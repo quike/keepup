@@ -54,9 +54,10 @@ func NewShellRunner() *ShellRunner {
 }
 
 // Run honors ctx for cancellation: the command runs in its own process group,
-// which is sent SIGTERM on cancel and SIGKILL after KillGrace. It captures stdout, stderr, and the
-// chronologically interleaved combined stream into three buffers populated on
-// the returned RunResult; ExitCode and DurationMs are also filled in.
+// which is sent SIGTERM on cancel and SIGKILL after KillGrace. It captures
+// stdout, stderr, and the chronologically interleaved combined stream into
+// three buffers populated on the returned RunResult; ExitCode and DurationMs
+// are also filled in.
 //
 // The command and arguments come from user-supplied configuration; that is
 // the point of this tool. gosec G204 is suppressed for the exec call.

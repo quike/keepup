@@ -9,8 +9,10 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -36,58 +38,84 @@ type Store interface {
 	Save(group string, e *Entry) error
 }
 
-// Compute returns a content fingerprint for the given cache spec. The
-// fingerprint changes when the method, anything about a command in the group's
-// list except silent, or any matched input file changes. For shell-form entries the
-// fingerprint also changes when the shell program changes. A glob that matches
-// nothing contributes nothing, so adding the first matching file naturally
-// changes the fingerprint.
-func Compute(spec *config.Cache, shell string, commands []config.CommandSpec) (string, error) {
+// Inputs is everything a group's fingerprint is computed from.
+type Inputs struct {
+	Spec *config.Cache
+	// Shell is the group's shell:, folded in for shell-form entries only.
+	Shell string
+	// GlobalEnv and GroupEnv are the declared env: layers each command's own
+	// env: is merged over, with the same precedence the runner uses.
+	GlobalEnv map[string]string
+	GroupEnv  map[string]string
+	Commands  []config.CommandSpec
+	// CacheDir is where entries are stored. Paths under it never count as
+	// inputs, so a broad reads glob cannot feed the cache its own entries.
+	CacheDir string
+}
+
+// Compute returns a content fingerprint for a group's inputs. The fingerprint
+// changes when the method, anything about a command in the group's list
+// except silent, the declared env any command runs with, or any matched input
+// file outside the cache dir changes. For shell-form entries the fingerprint
+// also changes when the shell program changes. A glob that matches nothing
+// contributes nothing, so adding the first matching file naturally changes
+// the fingerprint.
+func Compute(in Inputs) (string, error) {
 	h := sha256.New()
 	// Salt with the full command list and method so any changed command (or a
 	// form change: argv vs shell) busts the cache even when inputs are
-	// identical. v3 marks the multi-command fingerprint format.
+	// identical. v4 marks the format that folds in the merged global, group,
+	// and command env; bumping it makes every older entry miss once.
 	// The \x00/\x01/\x02 sentinel encoding assumes config values are free of
 	// these control bytes (user's own config; a collision only mis-caches their
 	// own group).
-	fmt.Fprintf(h, "v3\x00%s\x00", spec.Method)
-	for _, c := range commands {
-		fmt.Fprintf(h, "%s\x00%t\x00", c.Command, c.IsShell)
-		if c.IsShell {
-			fmt.Fprintf(h, "%s\x00", shell)
-		}
-		for _, p := range c.Params {
-			fmt.Fprintf(h, "%s\x01", p)
-		}
-		// Emitted only when set: a config using neither must keep hashing as it
-		// did before they existed, or every cache entry silently invalidates.
-		if c.Dir != "" {
-			fmt.Fprintf(h, "%s\x03", c.Dir)
-		}
-		for _, k := range slices.Sorted(maps.Keys(c.Env)) {
-			fmt.Fprintf(h, "%s\x04%s\x03", k, c.Env[k])
-		}
-		// Distinct markers: the two policies change whether the group
-		// succeeds, so they must never hash alike.
-		if c.ContinueOnError {
-			fmt.Fprintf(h, "coe\x03")
-		}
-		if c.Always {
-			fmt.Fprintf(h, "alw\x03")
-		}
-		fmt.Fprintf(h, "\x02")
+	fmt.Fprintf(h, "v4\x00%s\x00", in.Spec.Method)
+	for _, c := range in.Commands {
+		hashCommand(h, c, in.Shell, config.DeclaredEnv(in.GlobalEnv, in.GroupEnv, c.Env))
 	}
 
-	files, err := resolveGlobs(spec.Reads)
+	files, err := resolveGlobs(in.Spec.Reads)
+	if err != nil {
+		return "", err
+	}
+	files, err = excludeDir(files, in.CacheDir)
 	if err != nil {
 		return "", err
 	}
 	for _, f := range files {
-		if err := hashFile(h, spec.Method, f); err != nil {
+		if err := hashFile(h, in.Spec.Method, f); err != nil {
 			return "", err
 		}
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashCommand folds one command entry, and the env it runs with, into h.
+func hashCommand(h io.Writer, c config.CommandSpec, shell string, env map[string]string) {
+	fmt.Fprintf(h, "%s\x00%t\x00", c.Command, c.IsShell)
+	if c.IsShell {
+		fmt.Fprintf(h, "%s\x00", shell)
+	}
+	for _, p := range c.Params {
+		fmt.Fprintf(h, "%s\x01", p)
+	}
+	// Emitted only when set, so adding a new optional key never changes the
+	// fingerprint of a config that does not use it.
+	if c.Dir != "" {
+		fmt.Fprintf(h, "%s\x03", c.Dir)
+	}
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		fmt.Fprintf(h, "%s\x04%s\x03", k, env[k])
+	}
+	// Distinct markers: the two policies change whether the group
+	// succeeds, so they must never hash alike.
+	if c.ContinueOnError {
+		fmt.Fprintf(h, "coe\x03")
+	}
+	if c.Always {
+		fmt.Fprintf(h, "alw\x03")
+	}
+	fmt.Fprintf(h, "\x02")
 }
 
 // WritesPresent reports whether every declared output glob matches at least
@@ -149,4 +177,38 @@ func resolveGlobs(patterns []string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// excludeDir drops every path at or below dir. Paths are compared in absolute,
+// cleaned form, so a relative cache-dir still excludes matches from absolute
+// globs and vice versa. An empty dir excludes nothing.
+func excludeDir(paths []string, dir string) ([]string, error) {
+	if dir == "" {
+		return paths, nil
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve cache dir %q: %w", dir, err)
+	}
+	kept := make([]string, 0, len(paths))
+	for _, p := range paths {
+		absPath, err := filepath.Abs(p)
+		if err != nil {
+			return nil, fmt.Errorf("resolve input %q: %w", p, err)
+		}
+		if !isWithin(absPath, absDir) {
+			kept = append(kept, p)
+		}
+	}
+	return kept, nil
+}
+
+// isWithin reports whether path is dir itself or lies below it. Both paths
+// must be absolute and clean.
+func isWithin(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

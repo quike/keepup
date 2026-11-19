@@ -310,8 +310,9 @@ One limit worth knowing: **`retries:` replays the whole sequence**, so an
 `env`, `dir`, `continue-on-error`, and `always` all fold into the cache
 fingerprint, so changing any of them re-runs the group. `silent` does not: it
 changes nothing about what the command does or produces, so toggling it keeps a
-valid cached result. A group that uses none of these keys keeps the fingerprint
-it had before they existed — upgrading does not invalidate existing caches.
+valid cached result. The command's `env` is fingerprinted after merging it over
+the global and group `env:` (see [Caching](#caching)), so moving a variable
+between layers without changing its effective value keeps the cache.
 
 ### Referencing other groups' output
 
@@ -470,15 +471,29 @@ groups:
 | `reads`  | — (required) | Input paths/globs. The fingerprint also folds in `command` + `params`, so changing the command busts the cache. |
 | `writes` | `[]`         | Output paths/globs. If any declared output is missing, the cache is treated as a miss and the group re-runs.    |
 
+Besides the `reads` files, the fingerprint covers every command in the group
+and the `env:` each one declares: global `env:`, then the group's `env:`, then
+the command's own `env`, merged with the same precedence as at run time.
+Changing `GOOS` or `CGO_ENABLED` at any level re-runs the group instead of
+replaying output built for another target. Variables inherited from the
+calling shell are not part of the fingerprint; declare the ones that matter.
+
 Mechanics:
 
 - The fingerprint is stored under `settings.cache-dir` (default
   `.keepup-cache`), one JSON file per group. Point `cache-dir` at a shared
-  volume to share hits across machines/CI.
+  volume to share hits across machines/CI. Entries are written to a temp file
+  and renamed into place, so a crash or a concurrent writer never leaves a
+  truncated entry.
+- Anything under `cache-dir` is ignored by `reads`, so a broad glob such as
+  `**/*.json` can't pick up the cache's own entries and miss on every run.
 - Globs use `**` (via doublestar), so `src/**/*.go` works.
 - `keepup run --no-cache` ignores existing entries and forces every group to
   run (entries are still refreshed afterwards).
 - Caching is per-group opt-in: groups without a `cache:` block always run.
+- **Upgrading:** declared `env:` joined the fingerprint in format v4, so every
+  existing entry misses once and its group re-runs on the first run after the
+  upgrade. Hits return from the next run on.
 
 ---
 

@@ -17,7 +17,7 @@ import (
 func fpFor(t *testing.T, dir string, cs config.CommandSpec) string {
 	t.Helper()
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "*.go")}}
-	fp, err := Compute(spec, "", []config.CommandSpec{cs})
+	fp, err := Compute(Inputs{Spec: spec, Commands: []config.CommandSpec{cs}})
 	require.NoError(t, err)
 	return fp
 }
@@ -115,27 +115,26 @@ func TestCompute_EnvPairsAreUnambiguous(t *testing.T) {
 	assert.NotEqual(t, fpFor(t, dir, a), fpFor(t, dir, b))
 }
 
-// Guards the upgrade path: without this, every existing cache entry invalidates.
-func TestCompute_UnchangedConfigKeepsItsFingerprint(t *testing.T) {
+// v4 folds the declared global and group env into the fingerprint, so every
+// v3 entry must miss once rather than replay output built under another env.
+func TestCompute_V3EntriesRebuildOnce(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.go"), "package main\n")
 	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "*.go")}}
-
-	got, err := Compute(spec, "/bin/sh", []config.CommandSpec{
+	commands := []config.CommandSpec{
 		{Command: "go", Params: []string{"build", "./..."}},
 		{Command: "echo done", IsShell: true},
-	})
+	}
+
+	got, err := Compute(Inputs{Spec: spec, Shell: "/bin/sh", Commands: commands})
 	require.NoError(t, err)
 
-	assert.Equal(t, legacyV3(t, spec, "/bin/sh", []config.CommandSpec{
-		{Command: "go", Params: []string{"build", "./..."}},
-		{Command: "echo done", IsShell: true},
-	}), got)
+	assert.NotEqual(t, legacyV3(t, spec, "/bin/sh", commands), got)
 }
 
-// legacyV3 reproduces the byte stream Compute produced before env/dir existed.
-// Written out independently so the back-compat assertion cannot drift along
-// with the implementation it is guarding.
+// legacyV3 reproduces the v3 byte stream for a config without env, dir, or
+// policy keys. Written out independently so the version-bump assertion cannot
+// drift along with the implementation it is guarding.
 func legacyV3(t *testing.T, spec *config.Cache, shell string, commands []config.CommandSpec) string {
 	t.Helper()
 	h := sha256.New()

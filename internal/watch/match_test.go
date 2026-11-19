@@ -28,9 +28,27 @@ func TestMatches(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, Matches(tc.patterns, tc.path))
+			assert.Equal(t, tc.want, Matches("", tc.patterns, tc.path))
 		})
 	}
+}
+
+// A config root whose own path holds glob metacharacters must not change
+// what its relative patterns match or which directories get watched.
+func TestRoot_WithGlobMetacharacters(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "[work]", "a*b?c", "app")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "src", "deep"), 0o755))
+	patterns := []string{filepath.Join("src", "**", "*.go")}
+
+	assert.True(t, Matches(root, patterns, filepath.Join(root, "src", "deep", "x.go")))
+	assert.False(t, Matches(root, patterns, filepath.Join(root, "README.md")))
+	assert.False(t, Matches(root, patterns, filepath.Join(filepath.Dir(root), "src", "x.go")),
+		"a relative pattern only matches under its root")
+
+	dirs, err := ResolveWatchDirs(root, patterns)
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(root, "src"), filepath.Join(root, "src", "deep")}, dirs)
 }
 
 func TestGlobBase(t *testing.T) {
@@ -60,7 +78,7 @@ func TestResolveWatchDirs(t *testing.T) {
 	mk("other")
 
 	t.Run("recursive walk of glob base", func(t *testing.T) {
-		dirs, err := ResolveWatchDirs([]string{filepath.Join(root, "src", "**", "*.go")})
+		dirs, err := ResolveWatchDirs("", []string{filepath.Join(root, "src", "**", "*.go")})
 		require.NoError(t, err)
 		assert.Contains(t, dirs, filepath.Join(root, "src"))
 		assert.Contains(t, dirs, filepath.Join(root, "src", "a"))
@@ -69,13 +87,20 @@ func TestResolveWatchDirs(t *testing.T) {
 	})
 
 	t.Run("missing base is skipped, not an error", func(t *testing.T) {
-		dirs, err := ResolveWatchDirs([]string{filepath.Join(root, "does-not-exist", "*.go")})
+		dirs, err := ResolveWatchDirs("", []string{filepath.Join(root, "does-not-exist", "*.go")})
 		require.NoError(t, err)
 		assert.Empty(t, dirs)
 	})
 
+	t.Run("relative patterns resolve against the root", func(t *testing.T) {
+		dirs, err := ResolveWatchDirs(root, []string{filepath.Join("src", "**", "*.go")})
+		require.NoError(t, err)
+		assert.Contains(t, dirs, filepath.Join(root, "src", "a", "deep"))
+		assert.NotContains(t, dirs, filepath.Join(root, "other"))
+	})
+
 	t.Run("literal file watches its directory", func(t *testing.T) {
-		dirs, err := ResolveWatchDirs([]string{filepath.Join(root, "src", "go.mod")})
+		dirs, err := ResolveWatchDirs("", []string{filepath.Join(root, "src", "go.mod")})
 		require.NoError(t, err)
 		assert.Contains(t, dirs, filepath.Join(root, "src"))
 	})

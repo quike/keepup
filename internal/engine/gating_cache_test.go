@@ -31,7 +31,7 @@ type scriptedProber struct {
 	calls   []string
 }
 
-func (p *scriptedProber) Probe(_ context.Context, script string, _ map[string]string) error {
+func (p *scriptedProber) Probe(_ context.Context, script, _ string, _ map[string]string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, script)

@@ -394,7 +394,7 @@ refreshes the entry.
 
 ### Where is the cache stored? Is it safe to commit or share?
 
-Under `settings.cache-dir` (default `.keepup-cache`), one JSON file per group
+Under `settings.cache-dir` (default `.keepup-cache`, beside the config file), one JSON file per group
 containing the fingerprint and the captured output. It's a build artifact —
 add it to `.gitignore`. You _can_ point `cache-dir` at a shared volume to
 share hits across machines or CI runners, since the fingerprint is
@@ -497,13 +497,13 @@ The initial run on startup emits no `watch.trigger` — the leading `flow.start`
 
 ```sh
 keepup init            # → ./keepup.yml (project-local)
-keepup init --global   # → ~/.config/keepup/keepup.yml (the default path)
+keepup init --global   # → ~/.config/keepup/keepup.yml (the fallback path)
 keepup init --force    # overwrite an existing file
 ```
 
-`./keepup.yml` is convenient for a repo you'll run with `keepup run --config keepup.yml`
-(or from that directory). `--global` writes to the path keepup reads when no
-`--config` is given, so afterward a bare `keepup run` just works. `--global`
+A bare `keepup run` finds `./keepup.yml` from that directory or any
+subdirectory, so the project-local file is usually what you want. `--global`
+writes the fallback keepup uses when no project config is found. `--global`
 and an explicit path are mutually exclusive. The scaffold defines two groups
 and a step flow that demonstrates output piping, and it's guaranteed to parse.
 

@@ -10,12 +10,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/configfile"
 	"github.com/quike/keepup/internal/engine"
 	"github.com/quike/keepup/internal/logger"
 )
@@ -130,8 +132,9 @@ func buildRootCmd(opts *runtimeOpts, stdout, stderr io.Writer) *cobra.Command {
 	// this one (guarded by TestPersistentPreRun_OnlyOnRoot).
 	root.PersistentPreRun = func(*cobra.Command, []string) { opts.dispatched = true }
 
-	defaultHelp := "Path to config file (default is ~/.config/" + appName + "/" + appName + ".yml)"
-	root.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "", defaultHelp)
+	configHelp := "Path to config file (default: nearest " + strings.Join(configfile.Names, ", ") +
+		" in this or a parent directory, else ~/.config/" + appName + "/" + appName + ".yml)"
+	root.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "", configHelp)
 	root.PersistentFlags().BoolVarP(&opts.dryRun, "dry-run", "d", false, "Dry run mode (no commands are executed)")
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "Verbose output")
 
@@ -316,20 +319,16 @@ func printGroups(out io.Writer, cfg *config.Config) error {
 	return nil
 }
 
-// load reads the config file and initializes the logger. Diagnostics (keepup's
-// logs and the --verbose config dump) go to diag, the CLI's stderr, never to
-// stdout: stdout is reserved for command output, list/validate/graph results,
-// and --events -.
+// load locates and reads the config file and initializes the logger.
+// Diagnostics (keepup's logs and the --verbose config dump) go to diag, the
+// CLI's stderr, never to stdout: stdout is reserved for command output,
+// list/validate/graph results, and --events -.
 func (o *runtimeOpts) load(diag io.Writer) error {
-	path := o.configFile
-	if path == "" {
-		var err error
-		path, err = defaultConfigPath()
-		if err != nil {
-			return err
-		}
-		o.configFile = path
+	path, err := configfile.NewLocator().Locate(o.configFile)
+	if err != nil {
+		return &config.Error{Err: err}
 	}
+	o.configFile = path
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -343,14 +342,6 @@ func (o *runtimeOpts) load(diag io.Writer) error {
 		}
 	}
 	return nil
-}
-
-func defaultConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("determine home dir: %w", err)
-	}
-	return filepath.Join(home, ".config", appName, appName+".yml"), nil
 }
 
 func dumpConfig(out io.Writer, path string, cfg *config.Config) error {

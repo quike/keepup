@@ -13,9 +13,9 @@ import (
 // (config) env; implementations layer it over the process environment.
 //
 // Predicates are short shell snippets (e.g. "test -f bin/app"), so they always
-// run through a shell.
+// run through a shell. dir is the working directory the predicate runs in.
 type Prober interface {
-	Probe(ctx context.Context, script string, env map[string]string) error
+	Probe(ctx context.Context, script, dir string, env map[string]string) error
 }
 
 // ShellProber runs predicates through the platform shell. Output is discarded;
@@ -30,10 +30,11 @@ type ShellProber struct {
 }
 
 // Probe runs script via the platform shell and returns its exit status as an
-// error (nil on success).
-func (p ShellProber) Probe(ctx context.Context, script string, env map[string]string) error {
+// error (nil on success). An empty dir means the process working directory.
+func (p ShellProber) Probe(ctx context.Context, script, dir string, env map[string]string) error {
 	cmd := exec.CommandContext(ctx, pickShell(""), shellFlag(), script) //nolint:gosec // user-declared predicate
 	cmd.Env = formatEnviron(overlay(parseEnviron(os.Environ()), env))
+	cmd.Dir = dir
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return runInGroup(cmd, p.KillGrace, p.Groups)

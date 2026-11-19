@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +34,32 @@ func TestWatchPatterns(t *testing.T) {
 	got := watchPatterns(cfg, flow)
 	// Deduped, declaration order preserved.
 	assert.Equal(t, []string{"**/*.go", "go.mod"}, got)
+}
+
+// The flow watcher resolves relative reads against the config's directory —
+// even one whose path holds glob metacharacters — and nowhere else.
+func TestNewFlowWatcher_ResolvesAgainstConfigDir(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Dir: filepath.Join(t.TempDir(), "[work]", "a*b?c")}
+	src := newStubSource()
+	w := newFlowWatcher(cfg, []string{"src/*.go"}, src,
+		watch.WithDebounce(10*time.Millisecond), watch.WithInitialRun(false))
+
+	got := make(chan []string, 1)
+	go func() {
+		_ = w.Run(t.Context(), func(_ context.Context, files []string) error { got <- files; return nil })
+	}()
+
+	elsewhere := filepath.Join(filepath.Dir(cfg.Dir), "src", "b.go")
+	inside := filepath.Join(cfg.Dir, "src", "a.go")
+	src.events <- watch.Event{Path: elsewhere}
+	src.events <- watch.Event{Path: inside}
+	select {
+	case files := <-got:
+		assert.Equal(t, []string{inside}, files)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a change under the config dir did not trigger a run")
+	}
 }
 
 func TestWatchPatterns_NoneWhenNoCache(t *testing.T) {
@@ -110,13 +137,22 @@ func (s *stubSource) Add(p string) error {
 }
 func (s *stubSource) Close() error { return nil }
 
+// loadWatchFixture loads the watch test-resource with its cache redirected to
+// a temp dir, so runs do not write into the source tree beside the fixture.
+func loadWatchFixture(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
+	require.NoError(t, err)
+	cfg.Settings.CacheDir = t.TempDir()
+	return cfg
+}
+
 // TestWatch_FixtureDrivesRerun loads the watch test-resource, derives the watch
 // set from its cache.reads, and verifies that a change matching one of those
 // globs triggers a re-run through the real watch.Watcher.
 func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	t.Parallel()
-	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
-	require.NoError(t, err)
+	cfg := loadWatchFixture(t)
 	flow := cfg.Flows["dev"]
 
 	patterns := watchPatterns(cfg, &flow)
@@ -124,7 +160,7 @@ func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	assert.Equal(t, []string{"proto/**/*.proto", "**/*.go", "go.mod", "go.sum"}, patterns)
 
 	src := newStubSource()
-	w := watch.New(patterns, src, watch.WithDebounce(10*time.Millisecond), watch.WithInitialRun(false))
+	w := newFlowWatcher(cfg, patterns, src, watch.WithDebounce(10*time.Millisecond), watch.WithInitialRun(false))
 
 	var runs int32
 	ctx, cancel := context.WithCancel(t.Context())
@@ -134,12 +170,12 @@ func TestWatch_FixtureDrivesRerun(t *testing.T) {
 	}()
 
 	// A change to a Go file matches "**/*.go" → should trigger one re-run.
-	src.events <- watch.Event{Path: "internal/app/main.go"}
+	src.events <- watch.Event{Path: filepath.Join(cfg.Dir, "internal", "app", "main.go")}
 	require.Eventually(t, func() bool { return atomic.LoadInt32(&runs) == 1 },
 		time.Second, 5*time.Millisecond)
 
 	// A non-matching change (Markdown) must NOT trigger another run.
-	src.events <- watch.Event{Path: "README.md"}
+	src.events <- watch.Event{Path: filepath.Join(cfg.Dir, "README.md")}
 	time.Sleep(40 * time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&runs))
 }
@@ -186,13 +222,12 @@ flows:
 // the wiring shape OR the cobra flag plumbing surfaces clearly.
 func TestWatchCmd_EventsWiring(t *testing.T) {
 	t.Parallel()
-	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
-	require.NoError(t, err)
+	cfg := loadWatchFixture(t)
 	flow := cfg.Flows["dev"]
 	patterns := watchPatterns(cfg, &flow)
 
 	src := newStubSource()
-	w := watch.New(patterns, src,
+	w := newFlowWatcher(cfg, patterns, src,
 		watch.WithDebounce(10*time.Millisecond),
 		watch.WithInitialRun(false))
 
@@ -208,7 +243,7 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 	defer cancel()
 	go func() { _ = w.Run(ctx, onChange) }()
 
-	src.events <- watch.Event{Path: "main.go"}
+	src.events <- watch.Event{Path: filepath.Join(cfg.Dir, "main.go")}
 	require.Eventually(t, func() bool {
 		return strings.Contains(sw.String(), `"event":"flow.end"`)
 	}, 2*time.Second, 10*time.Millisecond)
@@ -220,7 +255,7 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 	require.NotEqual(t, -1, flowStartIdx, "flow.start must be emitted")
 	assert.Less(t, triggerIdx, flowStartIdx,
 		"watch.trigger must precede flow.start within the same tick")
-	assert.Contains(t, got, `"files":["main.go"]`)
+	assert.Contains(t, got, `"files":["`+filepath.Join(cfg.Dir, "main.go")+`"]`)
 	assert.Contains(t, got, `"event":"flow.end"`)
 }
 
@@ -233,13 +268,12 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 // that the per-piece tests do not cover together.
 func TestWatchCmd_InitialRunThenTrigger(t *testing.T) {
 	t.Parallel()
-	cfg, err := config.LoadConfig("../internal/config/test-resources/config-watch.yml")
-	require.NoError(t, err)
+	cfg := loadWatchFixture(t)
 	flow := cfg.Flows["dev"]
 	patterns := watchPatterns(cfg, &flow)
 
 	src := newStubSource()
-	w := watch.New(patterns, src,
+	w := newFlowWatcher(cfg, patterns, src,
 		watch.WithDebounce(10*time.Millisecond),
 		watch.WithInitialRun(true)) // exercise the startup tick
 
@@ -267,14 +301,14 @@ func TestWatchCmd_InitialRunThenTrigger(t *testing.T) {
 	// sampling, so the trigger and the whole re-run envelope are all present —
 	// otherwise we'd race the re-run's flow.start, which is emitted just after
 	// the trigger.
-	src.events <- watch.Event{Path: "main.go"}
+	src.events <- watch.Event{Path: filepath.Join(cfg.Dir, "main.go")}
 	require.Eventually(t, func() bool {
 		return strings.Count(sw.String(), `"event":"flow.end"`) >= 2
 	}, 2*time.Second, 10*time.Millisecond)
 	full := sw.String()
 
 	// #1: the trigger self-identifies its flow (consistent with flow.*/group.* events).
-	assert.Contains(t, full, `"event":"watch.trigger","flow":"dev","files":["main.go"]`,
+	assert.Contains(t, full, `"event":"watch.trigger","flow":"dev","files":["`+filepath.Join(cfg.Dir, "main.go")+`"]`,
 		"watch.trigger must carry the flow name and changed files")
 
 	// The trigger must be followed by the re-run's flow.start.

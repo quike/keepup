@@ -141,15 +141,83 @@ func TestWritesPresent(t *testing.T) {
 
 	t.Run("present when all writes exist", func(t *testing.T) {
 		spec := &config.Cache{Writes: []string{bin}}
-		assert.True(t, WritesPresent(spec))
+		assert.True(t, WritesPresent("", spec))
 	})
 	t.Run("absent when a write is missing", func(t *testing.T) {
 		spec := &config.Cache{Writes: []string{bin, filepath.Join(dir, "missing")}}
-		assert.False(t, WritesPresent(spec))
+		assert.False(t, WritesPresent("", spec))
 	})
 	t.Run("no writes declared is trivially present", func(t *testing.T) {
-		assert.True(t, WritesPresent(&config.Cache{}))
+		assert.True(t, WritesPresent("", &config.Cache{}))
 	})
+	t.Run("relative writes resolve against the root", func(t *testing.T) {
+		spec := &config.Cache{Writes: []string{filepath.Join("bin", "app")}}
+		assert.True(t, WritesPresent(dir, spec))
+		assert.False(t, WritesPresent(t.TempDir(), spec))
+	})
+}
+
+func TestCompute_RelativeGlobsResolveAgainstRoot(t *testing.T) {
+	cmds := []config.CommandSpec{{Command: "go", Params: []string{"build"}}}
+	spec := &config.Cache{Method: config.CacheHash, Reads: []string{"src/*.go"}}
+
+	rootA, rootB := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(rootA, "src", "a.go"), "package a\n")
+	writeFile(t, filepath.Join(rootB, "src", "a.go"), "package a\n")
+
+	fpA, err := Compute(Inputs{Spec: spec, Root: rootA, Commands: cmds})
+	require.NoError(t, err)
+	fpB, err := Compute(Inputs{Spec: spec, Root: rootB, Commands: cmds})
+	require.NoError(t, err)
+	assert.Equal(t, fpA, fpB, "fingerprint must not depend on where the project lives")
+
+	empty, err := Compute(Inputs{Spec: spec, Root: t.TempDir(), Commands: cmds})
+	require.NoError(t, err)
+	assert.NotEqual(t, fpA, empty, "inputs must be read from the root, not the process cwd")
+
+	writeFile(t, filepath.Join(rootB, "src", "a.go"), "package a // changed\n")
+	fpB2, err := Compute(Inputs{Spec: spec, Root: rootB, Commands: cmds})
+	require.NoError(t, err)
+	assert.NotEqual(t, fpB, fpB2)
+}
+
+// A project under a directory whose name holds glob metacharacters must still
+// have its reads and writes matched, with a location-independent fingerprint.
+func TestCompute_RootWithGlobMetacharacters(t *testing.T) {
+	cmds := []config.CommandSpec{{Command: "go"}}
+	spec := &config.Cache{Method: config.CacheHash, Reads: []string{"src/**/*.go"}, Writes: []string{"bin/*"}}
+
+	plain := filepath.Join(t.TempDir(), "app")
+	meta := filepath.Join(t.TempDir(), "[work]", "a*b?c", "app")
+	for _, root := range []string{plain, meta} {
+		writeFile(t, filepath.Join(root, "src", "pkg", "a.go"), "package pkg\n")
+		writeFile(t, filepath.Join(root, "bin", "app"), "x")
+	}
+
+	fpPlain, err := Compute(Inputs{Spec: spec, Root: plain, Commands: cmds})
+	require.NoError(t, err)
+	fpMeta, err := Compute(Inputs{Spec: spec, Root: meta, Commands: cmds})
+	require.NoError(t, err)
+	assert.Equal(t, fpPlain, fpMeta, "reads must match under a metacharacter root")
+	assert.True(t, WritesPresent(meta, spec), "writes must match under a metacharacter root")
+
+	writeFile(t, filepath.Join(meta, "src", "pkg", "a.go"), "package pkg // changed\n")
+	fpChanged, err := Compute(Inputs{Spec: spec, Root: meta, Commands: cmds})
+	require.NoError(t, err)
+	assert.NotEqual(t, fpMeta, fpChanged, "inputs under a metacharacter root must be hashed")
+}
+
+func TestCompute_AbsoluteGlobIgnoresRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.go"), "package a\n")
+	spec := &config.Cache{Method: config.CacheHash, Reads: []string{filepath.Join(dir, "*.go")}}
+	cmds := []config.CommandSpec{{Command: "go"}}
+
+	withRoot, err := Compute(Inputs{Spec: spec, Root: t.TempDir(), Commands: cmds})
+	require.NoError(t, err)
+	withoutRoot, err := Compute(Inputs{Spec: spec, Commands: cmds})
+	require.NoError(t, err)
+	assert.Equal(t, withoutRoot, withRoot)
 }
 
 func TestFileStore_RoundTrip(t *testing.T) {

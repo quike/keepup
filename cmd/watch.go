@@ -56,13 +56,14 @@ type watchSourceSetup struct {
 }
 
 // setupWatchSource builds the fsnotify source and registers all resolved dirs.
-func setupWatchSource(patterns []string) (watchSourceSetup, error) {
+// Relative patterns resolve against root.
+func setupWatchSource(root string, patterns []string) (watchSourceSetup, error) {
 	setup := watchSourceSetup{cleanup: func() {}}
 	src, err := watch.NewFSNotifySource()
 	if err != nil {
 		return setup, fmt.Errorf("create file watcher: %w", err)
 	}
-	dirs, err := watch.ResolveWatchDirs(patterns)
+	dirs, err := watch.ResolveWatchDirs(root, patterns)
 	if err != nil {
 		_ = src.Close()
 		return setup, fmt.Errorf("resolve watch dirs: %w", err)
@@ -95,7 +96,7 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 		)
 	}
 
-	setup, err := setupWatchSource(patterns)
+	setup, err := setupWatchSource(opts.cfg.Dir, patterns)
 	if err != nil {
 		return err
 	}
@@ -116,8 +117,14 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 		emitter = engine.NewJSONEmitter(ew)
 	}
 
-	w := watch.New(patterns, setup.src, watch.WithLogger(opts.log))
+	w := newFlowWatcher(opts.cfg, patterns, setup.src, watch.WithLogger(opts.log))
 	return w.Run(cmd.Context(), buildOnChange(emitter, newChildOutput(cmd, eventsPath), opts, flowName))
+}
+
+// newFlowWatcher builds a Watcher whose relative patterns resolve against the
+// config's directory, the same root the cache globs them under.
+func newFlowWatcher(cfg *config.Config, patterns []string, src watch.Source, opts ...watch.Option) *watch.Watcher {
+	return watch.New(patterns, src, append([]watch.Option{watch.WithRoot(cfg.Dir)}, opts...)...)
 }
 
 // buildOnChange returns the per-tick callback the watcher invokes on each
@@ -140,7 +147,8 @@ func buildOnChange(
 }
 
 // watchPatterns collects the de-duplicated cache.reads globs across every group
-// in the flow. These are the inputs worth watching.
+// in the flow, as written. These are the inputs worth watching; they resolve
+// against the config's directory (see newFlowWatcher).
 func watchPatterns(cfg *config.Config, flow *config.Flow) []string {
 	seen := map[string]struct{}{}
 	out := []string{}

@@ -110,7 +110,7 @@ func TestShellProber_CancelKillsForkedGrandchildrenWithinGrace(t *testing.T) {
 	p := ShellProber{KillGrace: testGrace}
 
 	start := time.Now()
-	err := p.Probe(cancelWhenReady(t, ready), `trap "" TERM; sleep 30 & touch "$READY"; wait`, g.Env)
+	err := p.Probe(cancelWhenReady(t, ready), `trap "" TERM; sleep 30 & touch "$READY"; wait`, "", g.Env)
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), testGrace+testMargin)

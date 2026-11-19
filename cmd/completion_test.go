@@ -122,9 +122,8 @@ func TestCompleteFlows_UnusableConfigIsSilent(t *testing.T) {
 }
 
 func TestCompleteFlows_FallsBackToDefaultConfigPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	home := isolateHome(t)
+	t.Chdir(t.TempDir())
 	dir := filepath.Join(home, ".config", appName)
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, appName+".yml"), []byte(completionCfg), 0o600))
@@ -140,6 +139,7 @@ func TestCompleteFlows_UnresolvableHomeIsSilent(t *testing.T) {
 	}
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
+	t.Chdir(t.TempDir())
 
 	got, directive := completeFlows(&runtimeOpts{})(&cobra.Command{}, nil, "")
 	assert.Nil(t, got)

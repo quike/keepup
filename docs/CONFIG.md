@@ -11,6 +11,7 @@ binary understands. For migrating from v1, see [FAQ](FAQ.md).
 
 ## Document shape
 
+<!-- docs-example: skip -->
 ```yaml
 version: 2 # required; the only accepted value
 settings: { ... } # optional global settings
@@ -30,6 +31,12 @@ Top-level keys at a glance:
 | `groups`   | list   | yes      | The atomic units the flows compose.                    |
 | `default`  | string | no       | Name of the flow to run when none is given on the CLI. |
 | `flows`    | map    | yes      | Named pipelines. At least one must be declared.        |
+
+Keys are strict everywhere in the schema: an unknown or misspelled key (at
+the top level or inside `settings`, a group, a `cache` block, a flow or a step)
+is a load error that names the key and its line, for example
+`line 9: field skipif not found in type config.Group`. `keepup validate`
+reports it without running anything.
 
 ---
 
@@ -317,7 +324,7 @@ referenced group:
 groups:
   - name: build
     command: echo
-    params: [bin/keepup-{{ output.version }}]
+    params: ["bin/keepup-{{ output.version }}"]
   - name: version
     command: git
     params: [rev-parse, --short, HEAD]
@@ -395,6 +402,7 @@ Fields (Go-style capital case):
 
 Examples:
 
+<!-- docs-example: skip -->
 ```yaml
 when: '{{ eq (out "test").Status "ok" }}'
 when: '{{ gt (out "probe").DurationMs 500 }}'
@@ -479,6 +487,7 @@ Mechanics:
 A `flow` is a named pipeline that composes groups. Each flow picks a
 scheduling `mode`.
 
+<!-- docs-example: skip -->
 ```yaml
 flows:
   <flow-name>:

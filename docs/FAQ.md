@@ -249,10 +249,25 @@ concurrently.
 
 ### How is Ctrl-C handled?
 
-The signal is delivered through `context.Context` from the CLI down through
-`Engine.RunFlow` and into `Runner.Run`, which uses `exec.CommandContext`.
-The child process is killed and the flow returns the context error. All
-schedulers honor it.
+The first Ctrl-C (SIGINT) or SIGTERM is delivered through `context.Context`
+from the CLI down through `Engine.RunFlow` and into `Runner.Run`. All
+schedulers honor it, and the flow returns the context error.
+
+On Linux and macOS every command (and every `require`/`skip-if` predicate)
+runs in its own process group, so cancellation reaches everything it started,
+including processes forked by `shell:` lines, `go run`, or `npm` scripts:
+
+1. The whole group gets SIGTERM, so commands can clean up.
+2. After a 5-second grace period, anything still alive in the group gets
+   SIGKILL, and keepup stops waiting for its output.
+
+The same applies when a `timeout:` expires. Because commands run in their own
+process group, the terminal's Ctrl-C reaches them only through keepup.
+
+Press Ctrl-C again to stop waiting: keepup force-kills the running process
+groups and exits immediately with status 130.
+
+On Windows, cancellation kills the direct child process only.
 
 ### What happens to in-flight siblings when a group fails?
 
@@ -431,7 +446,9 @@ logged but does not stop watching — fix the code and save again.
 ### How do I stop it?
 
 Ctrl-C (SIGINT) or SIGTERM. The signal propagates through the context, the
-in-flight run is cancelled, and `watch` returns cleanly.
+in-flight run is cancelled gracefully (see [How is Ctrl-C handled?](#how-is-ctrl-c-handled)),
+and `watch` returns cleanly. A second Ctrl-C force-kills the in-flight
+commands and exits with status 130.
 
 ### Are newly-created files/directories picked up?
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,52 @@ func TestHumanizeDecodeError(t *testing.T) {
 			assert.Equal(t, tc.want, te.Errors)
 		})
 	}
+}
+
+// TestSchemaLocations_CoversEveryStrictStruct enforces the rule documented on
+// schemaLocations: every struct the strict decoder reaches from Config must
+// have a user-facing place name, or its unknown-key errors would fall back to
+// Go type names. Types with their own UnmarshalYAML report keys themselves.
+func TestSchemaLocations_CoversEveryStrictStruct(t *testing.T) {
+	t.Parallel()
+	for _, typ := range strictStructTypes(reflect.TypeFor[Config]()) {
+		_, ok := schemaLocations[typ]
+		assert.True(t, ok, "schemaLocations has no entry for %s", typ)
+	}
+}
+
+// strictStructTypes returns every struct type reachable from root through
+// fields, slices, arrays, maps and pointers whose decoding is left to the
+// reflective (KnownFields) decoder.
+func strictStructTypes(root reflect.Type) []reflect.Type {
+	unmarshaler := reflect.TypeFor[yaml.Unmarshaler]()
+	seen := map[reflect.Type]bool{}
+	var out []reflect.Type
+	var walk func(reflect.Type)
+	walk = func(t reflect.Type) {
+		k := t.Kind()
+		if k == reflect.Pointer || k == reflect.Slice || k == reflect.Array {
+			walk(t.Elem())
+			return
+		}
+		if k == reflect.Map {
+			walk(t.Key())
+			walk(t.Elem())
+			return
+		}
+		if k != reflect.Struct || seen[t] || reflect.PointerTo(t).Implements(unmarshaler) {
+			return
+		}
+		seen[t] = true
+		out = append(out, t)
+		for f := range t.Fields() {
+			if f.IsExported() && f.Tag.Get("yaml") != "-" {
+				walk(f.Type)
+			}
+		}
+	}
+	walk(root)
+	return out
 }
 
 func TestHumanizeDecodeError_PassesOtherErrorsThrough(t *testing.T) {

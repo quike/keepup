@@ -1,0 +1,15 @@
+---
+# Invalid: "max_concurrency" is a typo for "max-concurrency". Strict decoding
+# must reject it instead of silently leaving concurrency unbounded.
+version: 2
+
+settings:
+  max_concurrency: 2
+
+groups:
+  - { name: a, command: echo }
+
+flows:
+  f:
+    steps:
+      - run: [a]

@@ -147,6 +147,17 @@ func TestValidateCmd(t *testing.T) {
 	assert.Contains(t, out.String(), "ok")
 }
 
+func TestValidateCmd_ReportsUnknownKey(t *testing.T) {
+	t.Parallel()
+	cfgPath := writeTempConfig(t, minimalCfg+"\ndefaults: x\n")
+	var out bytes.Buffer
+	cmd := newRootCmd(&out, &out)
+	cmd.SetArgs([]string{"validate", "--config", cfgPath})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown key "defaults" at top level`)
+}
+
 func TestVerboseDumpsConfig(t *testing.T) {
 	t.Parallel()
 	cfgPath := writeTempConfig(t, minimalCfg)

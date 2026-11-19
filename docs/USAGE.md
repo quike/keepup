@@ -296,6 +296,7 @@ cheap probe is inconclusive.
 
 To branch on whether a sibling was skipped (rather than ran):
 
+<!-- docs-example: skip -->
 ```yaml
 when: '{{ eq (out "deploy").Status "skipped" }}'
 ```

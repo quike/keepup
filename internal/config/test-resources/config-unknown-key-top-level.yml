@@ -1,0 +1,14 @@
+---
+# Invalid: "defaults" is a typo for the top-level "default" key. Strict
+# decoding must reject it instead of silently running no default flow.
+version: 2
+
+groups:
+  - { name: a, command: echo }
+
+defaults: f
+
+flows:
+  f:
+    steps:
+      - run: [a]

@@ -43,6 +43,11 @@ type Config struct {
 	Groups   []Group           `yaml:"groups"`
 	Flows    map[string]Flow   `yaml:"flows"`
 	Default  string            `yaml:"default,omitempty"`
+
+	// Dir is the absolute directory holding the config file, set by
+	// LoadConfig. Relative paths in the config resolve against it; see
+	// ResolvePath. It is empty for a config parsed from bytes.
+	Dir string `yaml:"-"`
 }
 
 // schemaLocations names, in user terms, where each strictly decoded struct
@@ -383,11 +388,20 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, invalid(err)
 	}
-	data, err := os.ReadFile(filepath.Clean(expanded))
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config path %q: %w", expanded, err)
+	}
+	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, invalid(fmt.Errorf("read config file %q: %w", expanded, err))
 	}
-	return NewConfig(data)
+	cfg, err := NewConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Dir = filepath.Dir(abs)
+	return cfg, nil
 }
 
 // normalizeAndValidate enforces structural rules and runs reference checks

@@ -109,10 +109,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 	for i := range cfg.Groups {
 		groups[cfg.Groups[i].Name] = cfg.Groups[i]
 	}
-	cacheDir := cfg.Settings.CacheDir
-	if cacheDir == "" {
-		cacheDir = config.DefaultCacheDir
-	}
+	cacheDir := cfg.CachePath()
 	e := &Engine{
 		cfg:            cfg,
 		processEnv:     parseEnviron(os.Environ()),
@@ -337,13 +334,13 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	}
 
 	if group.Require != "" {
-		if err = e.prober.Probe(ctx, group.Require, config.DeclaredEnv(e.cfg.Env, nil, nil)); err != nil {
+		if err = e.prober.Probe(ctx, group.Require, e.cfg.CommandDir(""), config.DeclaredEnv(e.cfg.Env, nil, nil)); err != nil {
 			return fmt.Errorf("group %q: requirement %q not met: %w", group.Name, group.Require, err)
 		}
 	}
 
 	if group.SkipIf != "" {
-		if err = e.prober.Probe(ctx, group.SkipIf, config.DeclaredEnv(e.cfg.Env, nil, nil)); err == nil {
+		if err = e.prober.Probe(ctx, group.SkipIf, e.cfg.CommandDir(""), config.DeclaredEnv(e.cfg.Env, nil, nil)); err == nil {
 			e.outputs.Set(group.Name, result.RunResult{Status: result.StatusSkipped})
 			e.log.Info("group skipped", "group", group.Name, "reason", "skip-if", "predicate", group.SkipIf)
 			status = StatusSkipped
@@ -437,7 +434,7 @@ func (e *Engine) runSequence(ctx context.Context, group *config.Group, commands 
 		if firstErr != nil && !s.Always {
 			continue
 		}
-		out, err := e.runner.Run(ctx, e.commandGroup(group, s), s, e.cfg.Env)
+		out, err := e.runner.Run(ctx, e.commandGroup(group, s), e.located(s), e.cfg.Env)
 		aggregate(&agg, &out)
 
 		if err != nil && s.ContinueOnError {
@@ -501,7 +498,7 @@ func (e *Engine) runDetachedAlways(
 	grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), teardownGrace)
 	defer cancel()
 	for _, s := range todo {
-		out, err := e.runner.Run(grace, e.commandGroup(group, s), s, e.cfg.Env)
+		out, err := e.runner.Run(grace, e.commandGroup(group, s), e.located(s), e.cfg.Env)
 		aggregate(agg, &out)
 		if err != nil {
 			e.log.Warn("always command failed after cancellation",
@@ -531,6 +528,14 @@ func (e *Engine) commandGroup(group *config.Group, s config.CommandSpec) *config
 	return &sg
 }
 
+// located returns the spec the runner receives: its dir resolved against the
+// config (see config.CommandDir). Only the runner sees the resolved dir; the
+// cache fingerprints the dir as written so it is independent of location.
+func (e *Engine) located(s config.CommandSpec) config.CommandSpec {
+	s.Dir = e.cfg.CommandDir(s.Dir)
+	return s
+}
+
 // cacheLookup returns the stored entry when caching is enabled for the group,
 // the fingerprint matches, and all declared writes still exist.
 func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec) (*cache.Entry, bool) {
@@ -546,7 +551,7 @@ func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec)
 	if !ok || entry.Fingerprint != fp {
 		return nil, false
 	}
-	if !cache.WritesPresent(group.Cache) {
+	if !cache.WritesPresent(e.cfg.Dir, group.Cache) {
 		return nil, false
 	}
 	return entry, true
@@ -557,6 +562,7 @@ func (e *Engine) cacheLookup(group *config.Group, commands []config.CommandSpec)
 func (e *Engine) fingerprint(group *config.Group, commands []config.CommandSpec) (string, error) {
 	return cache.Compute(cache.Inputs{
 		Spec:      group.Cache,
+		Root:      e.cfg.Dir,
 		Shell:     group.Shell,
 		GlobalEnv: e.cfg.Env,
 		GroupEnv:  group.Env,

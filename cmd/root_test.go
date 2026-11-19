@@ -169,35 +169,28 @@ func TestVerboseDumpsConfig(t *testing.T) {
 	assert.NotContains(t, stdout.String(), "# config:")
 }
 
-func TestDefaultConfigPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	got, err := defaultConfigPath()
+func TestLoad_FallsBackToHomeConfigPath(t *testing.T) {
+	home := isolateHome(t)
+	t.Chdir(t.TempDir())
+	global := filepath.Join(home, ".config", "keepup", "keepup.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(global), 0o750))
+	require.NoError(t, os.WriteFile(global, []byte(minimalCfg), 0o600))
+
+	out, err := execRoot(t, "validate")
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(home, ".config", "keepup", "keepup.yml"), got)
+	assert.Contains(t, out, global+": ok")
 }
 
-func TestDefaultConfigPath_HomeMissingFails(t *testing.T) {
+func TestLoad_HomeMissingFails(t *testing.T) {
 	if home := os.Getenv("HOME"); home == "" {
 		t.Skip("HOME not set on this platform")
 	}
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
-	_, err := defaultConfigPath()
+	t.Chdir(t.TempDir())
+	_, err := execRoot(t, "validate")
 	require.Error(t, err)
-}
-
-func TestLoad_DefaultsToHomeConfigPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	var out bytes.Buffer
-	cmd := newRootCmd(&out, &out)
-	cmd.SetArgs([]string{"validate"})
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "load configuration")
+	assert.Contains(t, err.Error(), "home dir")
 }
 
 // failingWriter returns an error on every Write so we can exercise the

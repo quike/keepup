@@ -11,15 +11,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
+	"github.com/quike/keepup/internal/pathglob"
 )
 
-// Matches reports whether path satisfies any of the glob patterns. Patterns
-// support "**" via doublestar and are matched with OS path separators.
-func Matches(patterns []string, path string) bool {
-	clean := filepath.Clean(path)
+// Matches reports whether path satisfies any of the glob patterns. Relative
+// patterns are matched against path's location relative to root (empty means
+// the working directory); see pathglob.Match.
+func Matches(root string, patterns []string, path string) bool {
 	for _, p := range patterns {
-		if ok, err := doublestar.PathMatch(filepath.Clean(p), clean); err == nil && ok {
+		if pathglob.Match(root, p, path) {
 			return true
 		}
 	}
@@ -75,11 +75,15 @@ func dirOf(p string) string {
 // ResolveWatchDirs returns the de-duplicated, sorted set of directories that
 // must be watched so every file matched by patterns is observed. Each glob's
 // base directory is walked recursively (to cover "**"). Missing bases are
-// skipped rather than erroring — they may be created later.
-func ResolveWatchDirs(patterns []string) ([]string, error) {
+// skipped rather than erroring — they may be created later. A relative
+// pattern's base is joined onto root as a literal path.
+func ResolveWatchDirs(root string, patterns []string) ([]string, error) {
 	set := map[string]struct{}{}
 	for _, p := range patterns {
 		base := globBase(p)
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(root, base)
+		}
 		err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				// A non-existent base is fine; stop walking this branch.

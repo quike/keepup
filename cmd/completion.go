@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/configfile"
 )
 
 // completeFlows builds the completion function for a flow-name argument. It
@@ -30,17 +31,13 @@ func completeFlows(opts *runtimeOpts) cobra.CompletionFunc {
 	}
 }
 
-// configForCompletion loads the config the pending command would use: --config
-// when already on the line, otherwise the default path. It returns nil on any
-// failure, since completion has no channel to report an error on.
+// configForCompletion loads the config the pending command would use, located
+// exactly as runtimeOpts.load does. It returns nil on any failure, since
+// completion has no channel to report an error on.
 func configForCompletion(opts *runtimeOpts) *config.Config {
-	path := opts.configFile
-	if path == "" {
-		resolved, err := defaultConfigPath()
-		if err != nil {
-			return nil
-		}
-		path = resolved
+	path, err := configfile.NewLocator().Locate(opts.configFile)
+	if err != nil {
+		return nil
 	}
 	cfg, err := config.LoadConfig(path)
 	if err != nil {

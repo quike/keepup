@@ -149,10 +149,10 @@ func legacyV3(t *testing.T, spec *config.Cache, shell string, commands []config.
 		}
 		fmt.Fprintf(h, "\x02")
 	}
-	files, err := resolveGlobs(spec.Reads)
+	files, err := resolveGlobs("", spec.Reads)
 	require.NoError(t, err)
 	for _, f := range files {
-		require.NoError(t, hashFile(h, spec.Method, f))
+		require.NoError(t, hashFile(h, spec.Method, "", f))
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }

@@ -1,8 +1,15 @@
 # Configuration reference
 
-The keepup config is a single YAML document. By default it's read from
-`$HOME/.config/keepup/keepup.yml`; pass `-c` / `--config` to point at a
-different file.
+The keepup config is a single YAML document. Without `-c` / `--config`, keepup
+loads the first `keepup.yml`, `keepup.yaml` or `.keepup.yml` found in the
+current directory or one of its parents, falling back to
+`$HOME/.config/keepup/keepup.yml`. See [Usage](USAGE.md#config-location).
+
+**Relative paths resolve against the config file's directory**, wherever keepup
+is started from. That covers `cache.reads` and `cache.writes` globs, a command's
+`dir:`, `settings.working-dir` and `settings.cache-dir`. Absolute paths are
+used as written. (For the global `~/.config/keepup/keepup.yml` that directory
+is `~/.config/keepup`, so a global config usually wants absolute paths.)
 
 This document covers the **v2 schema**, which is the only one the current
 binary understands. For migrating from v1, see [FAQ](FAQ.md).
@@ -45,7 +52,7 @@ reports it without running anything.
 ```yaml
 settings:
   dry-run: false # bool; default false. CLI --dry-run can override.
-  working-dir: /tmp # string; reserved for future per-task chdir support.
+  working-dir: app # string; default directory commands run in.
   max-concurrency: 0 # int;   0 means unbounded.
   cache-dir: .keepup-cache # string; where cache fingerprints are stored.
   logging:
@@ -56,9 +63,9 @@ settings:
 | Field             | Default         | Notes                                                                                                                         |
 | ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `dry-run`         | `false`         | When true, the runner is bypassed for every group. The CLI `--dry-run` flag also forces this on regardless of the file value. |
-| `working-dir`     | `""`            | Currently reserved. Not consumed by the runner yet.                                                                           |
+| `working-dir`     | config's dir    | Directory commands and `require`/`skip-if` predicates run in when a command sets no `dir:`. Relative to the config's dir.     |
 | `max-concurrency` | `0` (unbounded) | Caps the number of groups running concurrently across both step- and dag-mode schedulers.                                     |
-| `cache-dir`       | `.keepup-cache` | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)).                                    |
+| `cache-dir`       | `.keepup-cache` | Directory where per-group cache fingerprints/outputs are stored (see [Caching](#caching)). Relative to the config's dir.      |
 | `logging.level`   | `info`          | Standard severity ladder. Invalid values fall back to `info`.                                                                 |
 | `logging.pretty`  | `false`         | `true` for the human renderer, `false` for one JSON object per line. Logs always go to stderr (see [Output streams](#output-streams)). |
 
@@ -249,8 +256,9 @@ groups:
 `env:`, command `env:`. A command's `env` applies to that command alone and does
 not leak into the entries around it.
 
-`dir` is resolved relative to the process working directory and must not be
-empty. It is the reason to prefer a map entry over `cd x && ./y`: the latter is
+`dir` is resolved relative to the config file's directory and must not be
+empty. A command without `dir` runs in `settings.working-dir`, or in the
+config's directory when that is unset. It is the reason to prefer a map entry over `cd x && ./y`: the latter is
 a string-form entry, which forces `shell:` on the whole group and gives up safe
 argv execution for every command in it.
 
@@ -496,7 +504,10 @@ Mechanics:
   truncated entry.
 - Anything under `cache-dir` is ignored by `reads`, so a broad glob such as
   `**/*.json` can't pick up the cache's own entries and miss on every run.
-- Globs use `**` (via doublestar), so `src/**/*.go` works.
+- Globs use `**` (via doublestar), so `src/**/*.go` works. Relative globs
+  match under the config file's directory (not `settings.working-dir`), and
+  the fingerprint records those config-relative paths, so moving the project
+  does not invalidate it.
 - `keepup run --no-cache` ignores existing entries and forces every group to
   run (entries are still refreshed afterwards).
 - Caching is per-group opt-in: groups without a `cache:` block always run.
@@ -759,7 +770,7 @@ Global flags:
 
 | Flag                  | Purpose                                                                    |
 | --------------------- | -------------------------------------------------------------------------- |
-| `-c, --config <path>` | Override the config-file path (defaults to `~/.config/keepup/keepup.yml`). |
+| `-c, --config <path>` | Use this config file instead of searching upward for `keepup.yml`.         |
 | `-d, --dry-run`       | Skip the runner; log what would run. Stacks on top of `settings.dry-run`.  |
 | `-v, --verbose`       | Dump the parsed config (to stderr) before running.                         |
 

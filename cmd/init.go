@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/configfile"
 )
 
 // starterConfig is the v2 scaffold written by `keepup init`. It is validated
@@ -57,7 +58,7 @@ func newInitCmd(stdout io.Writer) *cobra.Command {
 			case global && len(args) == 1:
 				return fmt.Errorf("--global and an explicit path are mutually exclusive")
 			case global:
-				p, err := defaultConfigPath()
+				p, err := configfile.NewLocator().GlobalPath()
 				if err != nil {
 					return err
 				}

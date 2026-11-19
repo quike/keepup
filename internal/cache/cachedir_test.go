@@ -68,3 +68,25 @@ func TestCompute_EmptyCacheDirExcludesNothing(t *testing.T) {
 
 	assert.NotEqual(t, before, jsonFP(t, root, ""))
 }
+
+func TestCompute_IgnoresCacheDirMatchesOfRootRelativeGlobs(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(t.TempDir())
+	writeFile(t, filepath.Join(root, "config.json"), "{}")
+	fp := func() string {
+		t.Helper()
+		got, err := Compute(Inputs{
+			Spec:     &config.Cache{Method: config.CacheHash, Reads: []string{"**/*.json"}},
+			Root:     root,
+			Commands: []config.CommandSpec{{Command: "go"}},
+			CacheDir: filepath.Join(root, ".keepup-cache"),
+		})
+		require.NoError(t, err)
+		return got
+	}
+	before := fp()
+
+	writeFile(t, filepath.Join(root, ".keepup-cache", "build.json"), `{"fingerprint":"x"}`)
+
+	assert.Equal(t, before, fp(), "cache entries must not feed the fingerprint")
+}

@@ -15,9 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
-
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/pathglob"
 	"github.com/quike/keepup/internal/result"
 )
 
@@ -41,6 +40,11 @@ type Store interface {
 // Inputs is everything a group's fingerprint is computed from.
 type Inputs struct {
 	Spec *config.Cache
+	// Root is the directory relative reads globs resolve against (empty means
+	// the process working directory). Matches are hashed under their
+	// root-relative path, so the fingerprint does not depend on where the
+	// project lives.
+	Root string
 	// Shell is the group's shell:, folded in for shell-form entries only.
 	Shell string
 	// GlobalEnv and GroupEnv are the declared env: layers each command's own
@@ -74,16 +78,16 @@ func Compute(in Inputs) (string, error) {
 		hashCommand(h, c, in.Shell, config.DeclaredEnv(in.GlobalEnv, in.GroupEnv, c.Env))
 	}
 
-	files, err := resolveGlobs(in.Spec.Reads)
+	files, err := resolveGlobs(in.Root, in.Spec.Reads)
 	if err != nil {
 		return "", err
 	}
-	files, err = excludeDir(files, in.CacheDir)
+	files, err = excludeDir(in.Root, files, in.CacheDir)
 	if err != nil {
 		return "", err
 	}
 	for _, f := range files {
-		if err := hashFile(h, in.Spec.Method, f); err != nil {
+		if err := hashFile(h, in.Spec.Method, in.Root, f); err != nil {
 			return "", err
 		}
 	}
@@ -120,9 +124,10 @@ func hashCommand(h io.Writer, c config.CommandSpec, shell string, env map[string
 
 // WritesPresent reports whether every declared output glob matches at least
 // one existing path. A missing output invalidates a would-be cache hit.
-func WritesPresent(spec *config.Cache) bool {
+// Relative globs resolve against root, as in Compute.
+func WritesPresent(root string, spec *config.Cache) bool {
 	for _, pattern := range spec.Writes {
-		matches, err := resolveGlobs([]string{pattern})
+		matches, err := resolveGlobs(root, []string{pattern})
 		if err != nil || len(matches) == 0 {
 			return false
 		}
@@ -130,8 +135,11 @@ func WritesPresent(spec *config.Cache) bool {
 	return true
 }
 
-func hashFile(h io.Writer, method config.CacheMethod, path string) error {
-	info, err := os.Stat(path)
+// hashFile hashes one matched input. path is the label written into the hash;
+// the file itself is read at path joined onto root.
+func hashFile(h io.Writer, method config.CacheMethod, root, path string) error {
+	file := onDisk(root, path)
+	info, err := os.Stat(file)
 	if err != nil {
 		return fmt.Errorf("stat input %q: %w", path, err)
 	}
@@ -145,7 +153,7 @@ func hashFile(h io.Writer, method config.CacheMethod, path string) error {
 	case config.CacheMtime:
 		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", path, info.ModTime().UnixNano(), info.Size())
 	default: // CacheHash
-		f, err := os.Open(path) //nolint:gosec // path comes from user-declared globs
+		f, err := os.Open(file) //nolint:gosec // path comes from user-declared globs
 		if err != nil {
 			return fmt.Errorf("open input %q: %w", path, err)
 		}
@@ -159,13 +167,14 @@ func hashFile(h io.Writer, method config.CacheMethod, path string) error {
 }
 
 // resolveGlobs expands each pattern, returning a sorted, de-duplicated list
-// of matching paths. Patterns support "**" via doublestar.
-func resolveGlobs(patterns []string) ([]string, error) {
+// of matching paths (see pathglob.Glob: relative patterns yield root-relative
+// matches, absolute patterns absolute ones).
+func resolveGlobs(root string, patterns []string) ([]string, error) {
 	set := make(map[string]struct{})
 	for _, pattern := range patterns {
-		matches, err := doublestar.FilepathGlob(pattern)
+		matches, err := pathglob.Glob(root, pattern)
 		if err != nil {
-			return nil, fmt.Errorf("bad glob %q: %w", pattern, err)
+			return nil, err
 		}
 		for _, m := range matches {
 			set[m] = struct{}{}
@@ -179,25 +188,26 @@ func resolveGlobs(patterns []string) ([]string, error) {
 	return out, nil
 }
 
-// excludeDir drops every path at or below dir. Paths are compared in absolute,
-// cleaned form, so a relative cache-dir still excludes matches from absolute
-// globs and vice versa. An empty dir excludes nothing.
-func excludeDir(paths []string, dir string) ([]string, error) {
+// excludeDir drops every match whose on-disk location is at or below dir.
+// Locations are compared in absolute, cleaned form, so root-relative and
+// absolute matches are both checked against a relative or absolute dir. An
+// empty dir excludes nothing.
+func excludeDir(root string, matches []string, dir string) ([]string, error) {
 	if dir == "" {
-		return paths, nil
+		return matches, nil
 	}
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve cache dir %q: %w", dir, err)
 	}
-	kept := make([]string, 0, len(paths))
-	for _, p := range paths {
-		absPath, err := filepath.Abs(p)
+	kept := make([]string, 0, len(matches))
+	for _, m := range matches {
+		absPath, err := filepath.Abs(onDisk(root, m))
 		if err != nil {
-			return nil, fmt.Errorf("resolve input %q: %w", p, err)
+			return nil, fmt.Errorf("resolve input %q: %w", m, err)
 		}
 		if !isWithin(absPath, absDir) {
-			kept = append(kept, p)
+			kept = append(kept, m)
 		}
 	}
 	return kept, nil
@@ -211,4 +221,13 @@ func isWithin(path, dir string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// onDisk returns where a resolveGlobs match lives: root-relative matches are
+// joined onto root (a literal path, never a pattern); absolute ones stand.
+func onDisk(root, match string) string {
+	if filepath.IsAbs(match) {
+		return match
+	}
+	return filepath.Join(root, match)
 }

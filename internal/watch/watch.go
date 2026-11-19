@@ -28,6 +28,7 @@ type Source interface {
 // Watcher re-runs a callback when files matching its patterns change.
 type Watcher struct {
 	patterns   []string
+	root       string
 	src        Source
 	debounce   time.Duration
 	log        logger.Logger
@@ -39,6 +40,10 @@ type Option func(*Watcher)
 
 // WithDebounce overrides the default debounce window.
 func WithDebounce(d time.Duration) Option { return func(w *Watcher) { w.debounce = d } }
+
+// WithRoot sets the directory relative patterns resolve against (default: the
+// working directory).
+func WithRoot(dir string) Option { return func(w *Watcher) { w.root = dir } }
 
 // WithLogger sets the logger (default: no-op).
 func WithLogger(l logger.Logger) Option { return func(w *Watcher) { w.log = l } }
@@ -95,7 +100,7 @@ func (w *Watcher) Run(ctx context.Context, onChange func(context.Context, []stri
 			if isDir(ev.Path) {
 				_ = w.src.Add(ev.Path)
 			}
-			if Matches(w.patterns, ev.Path) {
+			if Matches(w.root, w.patterns, ev.Path) {
 				w.log.Debug("change detected", "path", ev.Path)
 				pending[ev.Path] = struct{}{}
 				debounce.Reset(w.debounce)

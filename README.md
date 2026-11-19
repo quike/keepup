@@ -71,6 +71,11 @@ keepup graph ci       # diagram the flow (waves, conditionals, caches)
 keepup run <TAB>      # complete flow names from the current config
 ```
 
+Without `-c`, keepup uses the nearest `keepup.yml` (or `keepup.yaml`,
+`.keepup.yml`) in the current directory or a parent, then falls back to
+`~/.config/keepup/keepup.yml`. Relative paths in the config resolve against the
+directory holding it, so keepup behaves the same from any subdirectory.
+
 ## Documentation
 
 - [Index](docs/index.md)

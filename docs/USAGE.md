@@ -10,8 +10,18 @@ For migration from v1, see [FAQ](FAQ.md).
 
 ## Config location
 
-By default keepup reads `$HOME/.config/keepup/keepup.yml`. Override with
-`-c` / `--config <path>`.
+Without `-c` / `--config <path>`, keepup looks for `keepup.yml`,
+`keepup.yaml` or `.keepup.yml` (in that order) in the current directory, then
+in each parent directory up to the filesystem root, and loads the first one it
+finds. If there is none, it falls back to `$HOME/.config/keepup/keepup.yml`.
+An explicit `--config` always wins. So `keepup init` followed by `keepup run`
+works from anywhere inside the project.
+
+Relative paths in the config (`cache.reads`/`writes`, a command's `dir:`,
+`settings.working-dir`, `settings.cache-dir`) resolve against the directory
+that contains the config file, not the directory you run keepup from. Commands
+run in that directory too, unless `settings.working-dir` or their own `dir:`
+says otherwise.
 
 ## A minimal v2 file
 
@@ -66,7 +76,7 @@ keepup version
 
 Common flags:
 
-- `-c, --config <path>` — point at a config file
+- `-c, --config <path>` — point at a config file instead of searching for one
 - `-d, --dry-run` — log what would run; never invoke the runner
 - `-v, --verbose` — dump the parsed config before running
 - `--no-cache` (run only) — ignore cached results and run every group
@@ -101,7 +111,7 @@ A failed group is still recorded: its `group.end` event carries
 
 Once the completion script is installed, the flow argument of `run`, `watch`,
 and `graph` completes from the flows declared in the config that command would
-load — including the one `--config` already on the line:
+load — found by the same search, or the one `--config` already on the line:
 
 ```sh
 $ keepup run <TAB>

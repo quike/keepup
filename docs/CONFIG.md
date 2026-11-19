@@ -348,10 +348,19 @@ so typos and ordering bugs surface immediately.
 [sprig](https://masterminds.github.io/sprig/) function library, plus two
 keepup helpers:
 
-| Function        | Returns                                                                    |
-| --------------- | -------------------------------------------------------------------------- |
-| `output "name"` | The captured stdout of group `name` (whitespace-trimmed).                  |
-| `env "KEY"`     | A value from the merged keepup environment (global `env:` + group `env:`). |
+| Function        | Returns                                                                       |
+| --------------- | ----------------------------------------------------------------------------- |
+| `output "name"` | The captured stdout of group `name` (whitespace-trimmed).                     |
+| `env "KEY"`     | A value from the environment the command will run with (see below), or `""`.  |
+
+`env` sees the same layering the command itself gets at run time, lowest to
+highest: process environment, global `env:`, group `env:`, command `env:`. So
+`{{ env "CI" }}` reads `CI` from your shell or CI runner unless a config `env:`
+block overrides it. A command's own `env:` values are rendered against the
+layers below them (process, global, group); that command's `command`, `params`,
+and `dir` then also see the rendered command `env:`. A `when:` predicate sees
+the process environment and global `env:` only (there is no group or command
+at step level).
 
 ```yaml
 groups:
@@ -553,7 +562,8 @@ flows:
 `when` is rendered by the same template engine (it can use `output`, `env`,
 and sprig) and is **falsey** — and therefore skips the step — when it renders
 to `""`, `false`, `0`, `no`, or `off`. It is evaluated against the outputs of
-**earlier** steps plus the environment; referencing a same-step or later group
+**earlier** steps plus the environment (process environment overlaid by
+global `env:`, so `BRANCH` above can come from your CI runner); referencing a same-step or later group
 is rejected at config-load. A skipped step's groups produce no output.
 
 ### DAG mode

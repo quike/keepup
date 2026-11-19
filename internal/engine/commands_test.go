@@ -234,7 +234,7 @@ func TestEngine_CommandsFixture_EndToEnd(t *testing.T) {
 	cfg, err := config.LoadConfig("../config/test-resources/config-commands-valid.yml")
 	require.NoError(t, err)
 
-	e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+	e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}), WithProcessEnv(nil))
 	require.NoError(t, e.RunFlow(context.Background(), "ci"))
 
 	multi, ok := e.Outputs().Get("multi")
@@ -296,7 +296,7 @@ func TestEngine_MultiCommand_RealRunner(t *testing.T) {
 	run := func(t *testing.T, g config.Group) (result.RunResult, error) {
 		t.Helper()
 		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{g.Name}})
-		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}), WithProcessEnv(nil))
 		err := e.RunFlow(context.Background(), "f")
 		out, _ := e.Outputs().Get(g.Name)
 		return out, err
@@ -343,7 +343,7 @@ func TestEngine_MultiCommand_RealRunner(t *testing.T) {
 			{Command: "echo", Params: []string{"never"}},
 		}}
 		cfg := stepFlowCfg(t, []config.Group{g}, [][]string{{"g"}})
-		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}))
+		e := New(cfg, WithRunner(&ShellRunner{Stdout: io.Discard, Stderr: io.Discard}), WithProcessEnv(nil))
 
 		out, err := e.runSequence(context.Background(), &g, g.CommandList())
 		require.Error(t, err)

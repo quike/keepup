@@ -13,7 +13,6 @@ import (
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/result"
-	"github.com/quike/keepup/internal/template"
 )
 
 func TestShellRunner_EnvPrecedence(t *testing.T) {
@@ -154,7 +153,7 @@ func TestShellRunner_Silent(t *testing.T) {
 
 func TestExpandCommands_RendersDirAndEnv(t *testing.T) {
 	t.Parallel()
-	e := New(&config.Config{Version: 2})
+	e := New(&config.Config{Version: 2, Env: map[string]string{"KEEPUP_TARGET": "linux"}}, WithProcessEnv(nil))
 	g := &config.Group{Name: "package", Commands: []config.CommandSpec{{
 		Command: "./package.sh",
 		Dir:     `dist/{{ env "KEEPUP_TARGET" }}`,
@@ -162,10 +161,7 @@ func TestExpandCommands_RendersDirAndEnv(t *testing.T) {
 		Silent:  true,
 	}}}
 
-	got, err := e.expandCommands(g, template.Data{
-		Outputs: map[string]result.RunResult{"build": {Stdout: "a31550e", Output: "a31550e"}},
-		Env:     map[string]string{"KEEPUP_TARGET": "linux"},
-	})
+	got, err := e.expandCommands(g, map[string]result.RunResult{"build": {Stdout: "a31550e", Output: "a31550e"}})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "dist/linux", got[0].Dir)
@@ -179,7 +175,7 @@ func TestExpandCommands_BadDirTemplateFails(t *testing.T) {
 	g := &config.Group{Name: "g", Commands: []config.CommandSpec{
 		{Command: "ls", Dir: "{{ bogusfunc }}"},
 	}}
-	_, err := e.expandCommands(g, template.Data{})
+	_, err := e.expandCommands(g, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expand dir")
 }
@@ -190,7 +186,7 @@ func TestExpandCommands_BadEnvTemplateFails(t *testing.T) {
 	g := &config.Group{Name: "g", Commands: []config.CommandSpec{
 		{Command: "ls", Env: map[string]string{"X": "{{ bogusfunc }}"}},
 	}}
-	_, err := e.expandCommands(g, template.Data{})
+	_, err := e.expandCommands(g, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expand env")
 }

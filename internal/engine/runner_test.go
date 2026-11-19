@@ -150,25 +150,6 @@ func TestShellRunner_EnvOverlayPrecedence(t *testing.T) {
 	assert.Equal(t, "group\n", out.Output)
 }
 
-func TestMergeEnvs(t *testing.T) {
-	t.Parallel()
-	envs := mergeEnvs(
-		[]string{"A=1", "B=2", "MALFORMED"},
-		map[string]string{"B": "two", "C": "3"},
-		map[string]string{"A": "one"},
-	)
-	got := map[string]string{}
-	for _, e := range envs {
-		k, v, _ := strings.Cut(e, "=")
-		got[k] = v
-	}
-	assert.Equal(t, "one", got["A"])
-	assert.Equal(t, "two", got["B"])
-	assert.Equal(t, "3", got["C"])
-	_, malformed := got["MALFORMED"]
-	assert.False(t, malformed)
-}
-
 func TestPickShell(t *testing.T) {
 	t.Run("explicit override wins", func(t *testing.T) {
 		assert.Equal(t, "/usr/local/bin/zsh", pickShell("/usr/local/bin/zsh"))

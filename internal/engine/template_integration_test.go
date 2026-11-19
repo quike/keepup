@@ -56,6 +56,90 @@ func TestEngine_Template_EnvFunc(t *testing.T) {
 	assert.Equal(t, "a:hi", r.calls[0])
 }
 
+// TestEngine_Template_EnvLayering pins that template `env` sees the same
+// layering the command's runtime environment gets: process < global < group
+// < command (for the command's own command/params/dir).
+func TestEngine_Template_EnvLayering(t *testing.T) {
+	t.Parallel()
+	const tmpl = `{{ env "LAYER" }}`
+	tests := []struct {
+		name     string
+		global   map[string]string
+		groupEnv map[string]string
+		cmdEnv   map[string]string
+		want     string
+	}{
+		{name: "process env is visible", want: "a:process"},
+		{name: "global overrides process", global: map[string]string{"LAYER": "global"}, want: "a:global"},
+		{
+			name:     "group overrides global",
+			global:   map[string]string{"LAYER": "global"},
+			groupEnv: map[string]string{"LAYER": "group"},
+			want:     "a:group",
+		},
+		{
+			name:     "command overrides group",
+			global:   map[string]string{"LAYER": "global"},
+			groupEnv: map[string]string{"LAYER": "group"},
+			cmdEnv:   map[string]string{"LAYER": "command"},
+			want:     "a:command",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := stepFlowCfg(t, []config.Group{{
+				Name:     "a",
+				Env:      tc.groupEnv,
+				Commands: []config.CommandSpec{{Command: "echo", Params: []string{tmpl}, Env: tc.cmdEnv}},
+			}}, [][]string{{"a"}})
+			cfg.Env = tc.global
+			r := &fakeRunner{}
+			e := New(cfg, WithRunner(r), WithProcessEnv([]string{"LAYER=process"}))
+
+			require.NoError(t, e.RunFlow(context.Background(), "f"))
+			assert.Equal(t, []string{tc.want}, r.calls)
+		})
+	}
+}
+
+// TestEngine_Template_CommandEnvRendersAgainstGroupLayers pins that a
+// command's own env: values are rendered against process < global < group
+// (they cannot see themselves), and the rendered values then feed that
+// command's params.
+func TestEngine_Template_CommandEnvRendersAgainstGroupLayers(t *testing.T) {
+	t.Parallel()
+	cfg := stepFlowCfg(t, []config.Group{{
+		Name: "a",
+		Env:  map[string]string{"BASE": "group"},
+		Commands: []config.CommandSpec{{
+			Command: "echo",
+			Params:  []string{`{{ env "DERIVED" }}`},
+			Env:     map[string]string{"DERIVED": `{{ env "BASE" }}-{{ env "HOME_ISH" }}`},
+		}},
+	}}, [][]string{{"a"}})
+	r := &fakeRunner{}
+	e := New(cfg, WithRunner(r), WithProcessEnv([]string{"HOME_ISH=proc"}))
+
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	assert.Equal(t, []string{"a:group-proc"}, r.calls)
+}
+
+// TestEngine_Template_EnvIgnoresUninjectedProcessEnv pins that the template
+// environment comes from the injected process env, not os.Environ, so tests
+// stay hermetic.
+func TestEngine_Template_EnvIgnoresUninjectedProcessEnv(t *testing.T) {
+	t.Setenv("KEEPUP_TEST_OS_ONLY", "leaked")
+	cfg := stepFlowCfg(t, []config.Group{
+		{Name: "a", Command: "echo", Params: []string{`{{ env "KEEPUP_TEST_OS_ONLY" }}`}},
+	}, [][]string{{"a"}})
+	r := &fakeRunner{}
+	e := New(cfg, WithRunner(r), WithProcessEnv(nil))
+
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	assert.Equal(t, []string{"a:"}, r.calls)
+}
+
 func TestEngine_Template_CommandIsExpanded(t *testing.T) {
 	t.Parallel()
 	// The command itself (not just params) is template-expanded.

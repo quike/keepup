@@ -137,6 +137,7 @@ func buildOnChange(emitter engine.Emitter, opts *runtimeOpts, flowName string) f
 		engineOpts := []engine.Option{
 			engine.WithLogger(opts.log),
 			engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
+			engine.WithProcessGroups(opts.procGroups),
 		}
 		if emitter != nil {
 			engineOpts = append(engineOpts, engine.WithEmitter(emitter))

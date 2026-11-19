@@ -41,6 +41,11 @@ type ShellRunner struct {
 	// into the returned RunResult. If nil, os.Stdout/os.Stderr are used.
 	Stdout io.Writer
 	Stderr io.Writer
+	// KillGrace is how long a canceled command's process group gets to exit
+	// after SIGTERM before it is SIGKILLed. Zero means DefaultKillGrace.
+	KillGrace time.Duration
+	// Groups, if set, tracks running commands so they can be force-killed.
+	Groups *ProcessGroups
 }
 
 // NewShellRunner returns a runner wired to the process stdio.
@@ -48,9 +53,11 @@ func NewShellRunner() *ShellRunner {
 	return &ShellRunner{Stdout: os.Stdout, Stderr: os.Stderr}
 }
 
-// Run honors ctx for cancellation. It captures stdout, stderr, and the
-// chronologically interleaved combined stream into three buffers populated on
-// the returned RunResult; ExitCode and DurationMs are also filled in.
+// Run honors ctx for cancellation: the command runs in its own process group,
+// which is sent SIGTERM on cancel and SIGKILL after KillGrace. It captures
+// stdout, stderr, and the chronologically interleaved combined stream into
+// three buffers populated on the returned RunResult; ExitCode and DurationMs
+// are also filled in.
 //
 // The command and arguments come from user-supplied configuration; that is
 // the point of this tool. gosec G204 is suppressed for the exec call.
@@ -79,7 +86,7 @@ func (r *ShellRunner) Run(
 	cmd.Stderr = io.MultiWriter(stderr, captureStderr, captureCombined)
 
 	start := time.Now()
-	runErr := cmd.Run()
+	runErr := runInGroup(cmd, r.KillGrace, r.Groups)
 	durationMs := time.Since(start).Milliseconds()
 
 	exitCode := 0

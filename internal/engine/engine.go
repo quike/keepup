@@ -23,6 +23,7 @@ type Engine struct {
 	groups         map[string]config.Group
 	runner         Runner
 	prober         Prober
+	procGroups     *ProcessGroups
 	outputs        OutputStore
 	expander       template.Expander
 	cache          cache.Store
@@ -46,6 +47,14 @@ func WithRunner(r Runner) Option { return func(e *Engine) { e.runner = r } }
 
 // WithProber overrides the default ShellProber used for skip-if/require.
 func WithProber(p Prober) Option { return func(e *Engine) { e.prober = p } }
+
+// WithProcessGroups registers the default ShellRunner's and ShellProber's
+// running process groups with groups, so the caller can force-kill them
+// (e.g. on a repeated interrupt). It has no effect on a Runner or Prober
+// supplied via WithRunner/WithProber.
+func WithProcessGroups(groups *ProcessGroups) Option {
+	return func(e *Engine) { e.procGroups = groups }
+}
 
 // WithOutputStore overrides the default in-memory OutputStore.
 func WithOutputStore(s OutputStore) Option { return func(e *Engine) { e.outputs = s } }
@@ -86,8 +95,6 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 	e := &Engine{
 		cfg:            cfg,
 		groups:         groups,
-		runner:         NewShellRunner(),
-		prober:         ShellProber{},
 		outputs:        NewMemoryOutputStore(),
 		expander:       template.NewExpander(),
 		cache:          cache.NewFileStore(cacheDir),
@@ -100,7 +107,22 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 	for _, opt := range opts {
 		opt(e)
 	}
+	e.applyDefaultProcessCollaborators()
 	return e
+}
+
+// applyDefaultProcessCollaborators fills in the shell-backed Runner and
+// Prober unless options supplied their own. It runs after the options so the
+// defaults see WithProcessGroups regardless of option order.
+func (e *Engine) applyDefaultProcessCollaborators() {
+	if e.runner == nil {
+		r := NewShellRunner()
+		r.Groups = e.procGroups
+		e.runner = r
+	}
+	if e.prober == nil {
+		e.prober = ShellProber{Groups: e.procGroups}
+	}
 }
 
 // Outputs returns the captured outputs (populated after RunFlow completes).

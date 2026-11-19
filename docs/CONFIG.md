@@ -642,6 +642,9 @@ Semantics:
 - The envelope wraps only the **command run** — gating predicates (`require`,
   `skip-if`) and cache lookups are not retried or timed out.
 - Each retry attempt gets its own fresh timeout.
+- A timed-out attempt is stopped like an interrupted one: on Linux and macOS
+  its whole process group gets SIGTERM, then SIGKILL after a 5-second grace
+  period, so processes it forked are stopped too.
 - Between attempts there is a short backoff (`base × attempt`); it respects
   Ctrl-C / context cancellation.
 - A cache write happens only after a successful attempt, so a timed-out or

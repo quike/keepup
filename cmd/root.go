@@ -39,14 +39,32 @@ type runtimeOpts struct {
 
 	cfg *config.Config
 	log logger.Logger
+	// procGroups tracks running command process groups so a repeated
+	// interrupt can force-kill them; nil outside Execute.
+	procGroups *engine.ProcessGroups
 }
 
 // Execute runs the root command and returns the exit code. main() should call
 // os.Exit on the returned value.
 func Execute() int {
-	root := newRootCmd(os.Stdout, os.Stderr)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	groups := engine.NewProcessGroups()
+	root := newRootCmdWithProcessGroups(os.Stdout, os.Stderr, groups)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	done := make(chan struct{})
+	defer close(done)
+	go interruptHandler{
+		signals:   signals,
+		cancel:    cancel,
+		forceKill: groups.KillAll,
+		exit:      os.Exit,
+		stderr:    os.Stderr,
+	}.run(done)
+
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -57,7 +75,13 @@ func Execute() int {
 // newRootCmd builds a fresh root command tree wired to the given writers.
 // It returns a brand-new tree on each call so tests can run safely in parallel.
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
-	opts := &runtimeOpts{}
+	return newRootCmdWithProcessGroups(stdout, stderr, nil)
+}
+
+// newRootCmdWithProcessGroups is newRootCmd with the engines' running process
+// groups registered in groups, so the signal handler can force-kill them.
+func newRootCmdWithProcessGroups(stdout, stderr io.Writer, groups *engine.ProcessGroups) *cobra.Command {
+	opts := &runtimeOpts{procGroups: groups}
 
 	root := &cobra.Command{
 		Use:   appName,
@@ -104,6 +128,7 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 				engine.WithLogger(opts.log),
 				engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
 				engine.WithNoCache(opts.noCache),
+				engine.WithProcessGroups(opts.procGroups),
 			}
 			if eventsPath != "" {
 				w, closeFn, err := openEventsWriter(eventsPath, cmd.OutOrStdout())

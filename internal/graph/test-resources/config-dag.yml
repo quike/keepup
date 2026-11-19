@@ -2,6 +2,7 @@ version: 2
 
 # A dag-mode flow where deploy's when: predicate reads test's output. That
 # reference is a real scheduling dependency, so the diagram must draw it.
+# test also orders after lint via after:, drawn as a dashed ordering edge.
 groups:
   - name: build
     description: "Compile the binary"
@@ -9,6 +10,11 @@ groups:
     params: [build, "./..."]
     cache:
       reads: ["**/*.go"]
+
+  - name: lint
+    description: "Static checks"
+    command: go
+    params: [vet, "./..."]
 
   - name: test
     description: "Unit tests"
@@ -30,7 +36,10 @@ flows:
     mode: dag
     run:
       - build
-      - test
+      - lint
+      # Pure ordering: test reads nothing from lint, so this edge is dashed.
+      - group: test
+        after: [lint]
       - group: deploy
         when: '{{ eq (output "test") "pass" }}'
       - notify

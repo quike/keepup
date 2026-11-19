@@ -176,17 +176,22 @@ type Step struct {
 }
 
 // RunEntry is one member of a dag-mode flow's run list. It is either a bare
-// group-name scalar or a {group, when} mapping; both forms reference a group
-// defined in top-level groups: (never an inline definition).
+// group-name scalar or a {group, when, after} mapping; both forms reference a
+// group defined in top-level groups: (never an inline definition).
 type RunEntry struct {
 	Group string `yaml:"group"`
 	// When is an optional template predicate. The group is skipped when it
 	// renders falsey ("", "false", "0", "no", "off"); see the engine.
 	When string `yaml:"when,omitempty"`
+	// After lists groups of the same flow that must finish before this one
+	// starts, without consuming their output. Ordering edges live on the
+	// flow, not the group, so groups stay reusable across pipelines.
+	After []string `yaml:"after,omitempty"`
 }
 
-// UnmarshalYAML accepts a scalar (group name) or a mapping ({group, when}).
-// Any other shape, an empty group, or an unexpected key is a load error.
+// UnmarshalYAML accepts a scalar (group name) or a mapping ({group, when,
+// after}). Any other shape, an empty group, or an unexpected key is a load
+// error.
 func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
@@ -197,21 +202,8 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
-			key := node.Content[i].Value
-			valNode := node.Content[i+1]
-			switch key {
-			case "group":
-				if valNode.Kind != yaml.ScalarNode {
-					return fmt.Errorf(`run entry: "group" must be a string`)
-				}
-				r.Group = valNode.Value
-			case "when":
-				if valNode.Kind != yaml.ScalarNode {
-					return fmt.Errorf(`run entry: "when" must be a string`)
-				}
-				r.When = valNode.Value
-			default:
-				return fmt.Errorf("run entry: unexpected key %q (commands are defined in groups:)", key)
+			if err := r.unmarshalKey(node.Content[i].Value, node.Content[i+1]); err != nil {
+				return err
 			}
 		}
 		if r.Group == "" {
@@ -219,9 +211,48 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 		}
 		return nil
 	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
-		return fmt.Errorf("run entry: must be a group name or a {group, when} map")
+		return fmt.Errorf("run entry: must be a group name or a {group, when, after} map")
 	}
-	return fmt.Errorf("run entry: must be a group name or a {group, when} map")
+	return fmt.Errorf("run entry: must be a group name or a {group, when, after} map")
+}
+
+// unmarshalKey decodes one key of a map-form run entry.
+func (r *RunEntry) unmarshalKey(key string, val *yaml.Node) error {
+	switch key {
+	case "group":
+		if val.Kind != yaml.ScalarNode {
+			return fmt.Errorf(`run entry: "group" must be a string`)
+		}
+		r.Group = val.Value
+	case "when":
+		if val.Kind != yaml.ScalarNode {
+			return fmt.Errorf(`run entry: "when" must be a string`)
+		}
+		r.When = val.Value
+	case "after":
+		return decodeAfter(val, &r.After)
+	default:
+		return fmt.Errorf("run entry: unexpected key %q (commands are defined in groups:)", key)
+	}
+	return nil
+}
+
+// decodeAfter reads an after: list. Only the shape is checked here; whether
+// each name belongs to the flow, and whether the edges form a cycle, needs the
+// whole flow and is checked by ValidateReferences.
+func decodeAfter(val *yaml.Node, dst *[]string) error {
+	if val.Kind != yaml.SequenceNode {
+		return fmt.Errorf(`run entry: "after" must be a list of group names`)
+	}
+	if err := val.Decode(dst); err != nil {
+		return fmt.Errorf(`run entry: "after" must be a list of group names: %w`, err)
+	}
+	for _, name := range *dst {
+		if name == "" {
+			return fmt.Errorf(`run entry: "after" entries must not be empty`)
+		}
+	}
+	return nil
 }
 
 // CommandSpec is one entry in a group's commands: list. The YAML shape of the

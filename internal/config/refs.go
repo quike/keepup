@@ -63,7 +63,10 @@ func selfRefHint(g *Group) string {
 //     set, with the resulting data DAG being acyclic — including references
 //     inside `when:` predicates, which are treated as graph edges and
 //     cycle-checked).
-//   - dag mode additionally rejects cycles.
+//   - every after: name on a dag run entry must be another member of the
+//     same flow.
+//   - dag mode additionally rejects cycles, counting data references and
+//     after: ordering edges together.
 //
 // It is invoked from normalizeAndValidate so a single LoadConfig surfaces
 // every error.
@@ -157,36 +160,84 @@ func (c *Config) checkWhenRefs(flowName string, stepIdx int, when string, member
 	return nil
 }
 
-func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, memberSet map[string]struct{}) error {
-	adj := make(map[string][]string, len(members))
-	inDeg := make(map[string]int, len(members))
+// edgeSource says where a dag edge was declared, so a rejection can name the
+// construct the user actually wrote.
+type edgeSource int
+
+const (
+	fromCommand edgeSource = iota // {{ output.X }} in a command, param, dir or env
+	fromWhen                      // {{ output.X }} in a run entry's when:
+	fromAfter                     // a name in a run entry's after:
+)
+
+// dagEdges accumulates the edges of one dag flow for the cycle check. Data and
+// ordering edges are stored alike: both constrain scheduling, so a cycle mixing
+// them is still a cycle.
+type dagEdges struct {
+	flow      string
+	memberSet map[string]struct{}
+	defined   func(name string) bool // whether a group exists anywhere in the config
+	adj       map[string][]string
+	inDeg     map[string]int
+}
+
+func newDAGEdges(flow string, members []string, memberSet map[string]struct{}, defined func(string) bool) *dagEdges {
+	d := &dagEdges{
+		flow:      flow,
+		memberSet: memberSet,
+		defined:   defined,
+		adj:       make(map[string][]string, len(members)),
+		inDeg:     make(map[string]int, len(members)),
+	}
 	for _, m := range members {
-		inDeg[m] = 0
+		d.inDeg[m] = 0
 	}
-	// addEdge records ref -> m in the data graph. fromWhen toggles the error
-	// phrasing so a `when:` reference reads "when references {{ output.X }}"
-	// (mirroring step mode), distinguishing it from a command/param reference.
-	addEdge := func(ref, m string, fromWhen bool) error {
-		if _, ok := memberSet[ref]; !ok {
-			if fromWhen {
-				return fmt.Errorf(
-					"flow %q: group %q: when references {{ output.%s }}, but %q is not part of this flow",
-					flowName, m, ref, ref,
-				)
-			}
-			return fmt.Errorf(
-				"flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
-				flowName, m, ref, ref,
-			)
-		}
-		if ref == m {
-			return fmt.Errorf("flow %q: group %q references its own output%s",
-				flowName, m, selfRefHint(c.GroupByName(m)))
-		}
-		adj[ref] = append(adj[ref], m)
-		inDeg[m]++
-		return nil
+	return d
+}
+
+// add records from -> to after checking that from is a flow member and not to
+// itself. selfHint extends the self-reference message for data edges.
+func (d *dagEdges) add(from, to string, src edgeSource, selfHint string) error {
+	if _, ok := d.memberSet[from]; !ok {
+		return d.notInFlow(from, to, src)
 	}
+	if from == to {
+		if src == fromAfter {
+			return fmt.Errorf("flow %q: group %q cannot list itself in after", d.flow, to)
+		}
+		return fmt.Errorf("flow %q: group %q references its own output%s", d.flow, to, selfHint)
+	}
+	d.adj[from] = append(d.adj[from], to)
+	d.inDeg[to]++
+	return nil
+}
+
+// notInFlow phrases the rejection of an edge from a non-member after the
+// construct that declared it.
+func (d *dagEdges) notInFlow(from, to string, src edgeSource) error {
+	switch src {
+	case fromAfter:
+		if !d.defined(from) {
+			return fmt.Errorf("flow %q: group %q: after references %q, but no group %q is defined",
+				d.flow, to, from, from)
+		}
+		return fmt.Errorf("flow %q: group %q: after references %q, but %q is not part of this flow",
+			d.flow, to, from, from)
+	case fromWhen:
+		return fmt.Errorf("flow %q: group %q: when references {{ output.%s }}, but %q is not part of this flow",
+			d.flow, to, from, from)
+	case fromCommand:
+		return fmt.Errorf("flow %q: group %q references {{ output.%s }}, but %q is not part of this flow",
+			d.flow, to, from, from)
+	}
+	// Unreachable while every edgeSource has a case above; Go still needs a
+	// terminating statement after a switch without a default.
+	return fmt.Errorf("flow %q: group %q: unknown edge source %d", d.flow, to, src)
+}
+
+func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, memberSet map[string]struct{}) error {
+	isDefined := func(name string) bool { return c.GroupByName(name) != nil }
+	edges := newDAGEdges(flowName, members, memberSet, isDefined)
 	// seen catches the same group listed twice in run: — both bare strings and
 	// {group, when} maps. With per-entry `when:` predicates, last-wins would
 	// silently swallow a predicate; reject it at load.
@@ -200,34 +251,49 @@ func (c *Config) checkDAGRefs(flowName string, f *Flow, members []string, member
 			)
 		}
 		seen[m] = struct{}{}
+		if err := c.addRunEntryEdges(edges, &f.Run[i]); err != nil {
+			return err
+		}
+	}
+	return topoCheck(flowName, members, edges.adj, edges.inDeg)
+}
 
-		g := c.GroupByName(m)
-		if g == nil {
-			return fmt.Errorf("flow %q: group %q is not defined", flowName, m)
+// addRunEntryEdges records every edge into one run entry: data references in
+// its group's commands and its when:, and ordering edges from its after:.
+func (c *Config) addRunEntryEdges(edges *dagEdges, entry *RunEntry) error {
+	m := entry.Group
+	g := c.GroupByName(m)
+	if g == nil {
+		return fmt.Errorf("flow %q: group %q is not defined", edges.flow, m)
+	}
+	refs, err := ExtractRefs(g)
+	if err != nil {
+		return fmt.Errorf("flow %q: %w", edges.flow, err)
+	}
+	hint := selfRefHint(g)
+	for _, ref := range refs {
+		if err := edges.add(ref, m, fromCommand, hint); err != nil {
+			return err
 		}
-		refs, err := ExtractRefs(g)
-		if err != nil {
-			return fmt.Errorf("flow %q: %w", flowName, err)
+	}
+	// when: references create edges exactly like command/param refs.
+	if entry.When != "" {
+		whenRefs, werr := template.Refs(entry.When)
+		if werr != nil {
+			return fmt.Errorf("flow %q: group %q: when: %w", edges.flow, m, werr)
 		}
-		for _, ref := range refs {
-			if err := addEdge(ref, m, false); err != nil {
+		for _, ref := range whenRefs {
+			if err := edges.add(ref, m, fromWhen, hint); err != nil {
 				return err
 			}
 		}
-		// when: references create edges exactly like command/param refs.
-		if w := f.Run[i].When; w != "" {
-			whenRefs, werr := template.Refs(w)
-			if werr != nil {
-				return fmt.Errorf("flow %q: group %q: when: %w", flowName, m, werr)
-			}
-			for _, ref := range whenRefs {
-				if err := addEdge(ref, m, true); err != nil {
-					return err
-				}
-			}
+	}
+	for _, pred := range entry.After {
+		if err := edges.add(pred, m, fromAfter, ""); err != nil {
+			return err
 		}
 	}
-	return topoCheck(flowName, members, adj, inDeg)
+	return nil
 }
 
 // topoCheck runs Kahn's algorithm; an unvisited node after the sweep means
@@ -262,5 +328,5 @@ func topoCheck(flowName string, members []string, adj map[string][]string, inDeg
 			break
 		}
 	}
-	return fmt.Errorf("flow %q: data-reference cycle detected involving group %q", flowName, anchor)
+	return fmt.Errorf("flow %q: dependency cycle detected involving group %q (data references and after: edges)", flowName, anchor)
 }

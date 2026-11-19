@@ -22,14 +22,14 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | Feature                  | What it gives you                                                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | **Groups + flows**       | Reusable command units composed into many named pipelines in one file — no duplication.                                     |
-| **Two scheduling modes** | `step` (explicit parallel waves with barriers) or `dag` (topological, inferred from `{{ output.X }}` data deps).            |
+| **Two scheduling modes** | `step` (explicit parallel waves with barriers) or `dag` (topological, from `{{ output.X }}` data deps plus `after:` ordering edges). |
 | **Output piping**        | Pass one group's captured stdout into another via `{{ output "name" }}`, validated at load time.                            |
 | **Structured outputs**   | `{{ out "name" }}` returns a structured value (stdout, stderr, exit code, duration, status) for richer `when:` predicates. `output "name"` is unchanged. | dag + step |
 | **Templating**           | `command`/`params` are Go templates with [sprig](https://masterminds.github.io/sprig/): `{{ output "sha" \| trunc 7 }}`, `{{ env "CI" \| default "local" }}`. Legacy `{{ output.X }}` still works. |
 | **Caching**              | Per-group `cache: { reads, writes }` fingerprints inputs (hash or mtime) and skips unchanged work, replaying stored output. |
 | **Watch mode**           | `keepup watch` re-runs a flow on file changes (using each group's `cache.reads`); caching makes unaffected groups no-ops.   |
 | **Gating**               | `require:` (must pass) and `skip-if:` (skip when already done) predicates short-circuit a group before it runs.             |
-| **Conditionals**         | `when:` skips a step (step mode) or a single dag-mode group (dag mode); skipping a dag group cascades to all its dependents. |
+| **Conditionals**         | `when:` skips a step (step mode) or a single dag-mode group (dag mode); skipping a dag group cascades to all groups consuming its output. |
 | **Timeouts & retries**   | Per-step / per-flow `timeout` and `retries` envelope around each command attempt, with backoff.                             |
 | **Safe execution**       | Commands run as real argv by default (no shell injection); opt into a shell per group with `shell:`.                        |
 | **Env layering**         | Process env < global `env:` < group `env:` < command `env:`; templates (`{{ env "CI" }}`) see the same layers the command runs with. |

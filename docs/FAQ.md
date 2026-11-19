@@ -305,8 +305,9 @@ flows:
 
 `when:` uses the same template engine and falsey set as step-mode `when:`
 (`""`, `"false"`, `"0"`, `"no"`, `"off"`). The map form accepts **only**
-`group` and `when` — `command`, `params`, and other group fields belong on the
-group definition in `groups:`. An unexpected key is a config error.
+`group`, `when`, and `after` — `command`, `params`, and other group fields
+belong on the group definition in `groups:`. An unexpected key is a config
+error.
 
 References inside `when:` (e.g. `output "test"`) become scheduling edges:
 `test` is guaranteed to finish before the predicate runs, and the reference
@@ -338,6 +339,26 @@ $ keepup run release --config keepup.yml --events -
 \"deploy\" skipped"` marks groups skipped because their producer was skipped.
 A cascade skip is not a failure — the flow ends with `"status":"ok"` as long
 as no group actually errored.
+
+Only data dependencies cascade. A group that lists the skipped group in
+`after:` (a pure ordering edge) still runs once it is skipped, because no
+output it needs is missing.
+
+### How do I order dag groups that share no data?
+
+Use `after:` on the run entry. List order in `run:` means nothing in dag mode,
+so without a data reference or `after:` the groups start in parallel:
+
+```yaml
+flows:
+  ci:
+    mode: dag
+    run:
+      - lint
+      - { group: test, after: [lint] }
+```
+
+See [CONFIG.md](CONFIG.md#ordering-edges-after) for the rules.
 
 ### Does `--dry-run` evaluate `when:` predicates?
 
@@ -581,7 +602,7 @@ keepup graph <flow>       # a specific flow
 The output is a Mermaid `graph TD` block — pipe it into any Markdown
 preview, GitHub renders it natively. The graph shows the data DAG (the
 references), which is identical for step-mode and dag-mode versions of the
-same flow.
+same flow. Dag flows also draw their `after:` ordering edges, dashed.
 
 ---
 

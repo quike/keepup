@@ -26,8 +26,8 @@ type dagScheduler struct {
 	// its count drops to zero.
 	unresolvedPreds map[string]int
 	// skipped marks groups the scheduler has decided to skip — either because
-	// their own when: rendered falsey, or because they are downstream of a
-	// skipped group (cascade).
+	// their own when: rendered falsey, or because they consume the output of
+	// a skipped group (cascade).
 	skipped map[string]bool
 	// skipReason carries the human-readable reason for each skip ("when" or
 	// `upstream "<name>" skipped`), surfaced to logs and the event stream.
@@ -49,14 +49,15 @@ type dagScheduler struct {
 	baseline func() map[string]result.RunResult // stable snapshot for when: evaluation
 }
 
-// onDone resolves a terminal node's successors. A skipped node poisons its
-// successors (first poisoner wins the reason); every successor's unresolved
-// predecessor count is decremented and those that reach zero join the ready
-// worklist.
+// onDone resolves a terminal node's successors. A skipped node poisons the
+// successors that consume its output (first poisoner wins the reason); an
+// after: successor only waited for it to finish and is left alone. Every
+// successor's unresolved predecessor count is decremented and those that
+// reach zero join the ready worklist.
 func (s *dagScheduler) onDone(name string, wasSkipped bool) {
 	s.remaining--
 	for _, succ := range s.plan.Successors[name] {
-		if wasSkipped && !s.skipped[succ] {
+		if wasSkipped && !s.skipped[succ] && s.plan.EdgeKind(name, succ) == plan.EdgeData {
 			s.skipped[succ] = true
 			s.skipReason[succ] = fmt.Sprintf("upstream %q skipped", name)
 		}
@@ -126,9 +127,10 @@ func (s *dagScheduler) drainReady() {
 
 // runDAGPlan runs the topological closure of the plan. A group starts as soon
 // as every group it references (via {{ output.X }} in command/params OR in its
-// when: predicate) has finished. A group whose when: predicate renders falsey
-// is skipped, and every group downstream of it cascades to skipped too — a
-// consumer cannot run on a producer's missing output.
+// when: predicate) and every group in its after: list has finished. A group
+// whose when: predicate renders falsey is skipped, and every group consuming
+// its output cascades to skipped too — a consumer cannot run on a producer's
+// missing output. after: successors are not consumers and still run.
 //
 // All skip decisions and bookkeeping live in this single scheduler goroutine
 // (the dagScheduler value); workers only run groups, publish outputs under

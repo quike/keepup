@@ -119,8 +119,8 @@ func TestShellProber_CancelKillsForkedGrandchildrenWithinGrace(t *testing.T) {
 func TestProcessGroups_KillAllForceKillsRunningCommands(t *testing.T) {
 	t.Parallel()
 	groups := NewProcessGroups()
-	g, spec, _ := shellSpec(t, `trap "" TERM; sleep 30 & wait`)
-	r := &ShellRunner{Stdout: io.Discard, Stderr: io.Discard, Groups: groups}
+	g, spec, ready := shellSpec(t, `trap "" TERM; sleep 30 & touch "$READY"; wait`)
+	r := &ShellRunner{Stdout: io.Discard, Stderr: io.Discard, KillGrace: testGrace, Groups: groups}
 
 	done := make(chan error, 1)
 	go func() {
@@ -128,6 +128,7 @@ func TestProcessGroups_KillAllForceKillsRunningCommands(t *testing.T) {
 		done <- err
 	}()
 	require.Eventually(t, func() bool { return groups.len() == 1 }, testMargin, 5*time.Millisecond)
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, testMargin, 5*time.Millisecond)
 
 	groups.KillAll()
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -920,5 +921,101 @@ func TestLoadOutStructFieldsFixture(t *testing.T) {
 		if want, ok := wantWhen[entry.Group]; ok {
 			assert.Equal(t, want, entry.When, "when: for %s", entry.Group)
 		}
+	}
+}
+
+// TestLoadConfig_RejectsUnknownKeys pins strict decoding: a typo anywhere in
+// the schema is a load error naming the offending key and its line, never a
+// silently ignored key that turns a feature off.
+func TestLoadConfig_RejectsUnknownKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		path string
+		key  string
+		line int
+	}{
+		{"top level", "./test-resources/config-unknown-key-top-level.yml", "defaults", 9},
+		{"settings", "./test-resources/config-unknown-key-settings.yml", "max_concurrency", 7},
+		{"group", "./test-resources/config-unknown-key-group.yml", "skipif", 9},
+		{"cache", "./test-resources/config-unknown-key-cache.yml", "write", 11},
+		{"flow", "./test-resources/config-unknown-key-flow.yml", "retry", 11},
+		{"step", "./test-resources/config-unknown-key-step.yml", "timout", 13},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadConfig(tc.path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), fmt.Sprintf("line %d: field %s not found", tc.line, tc.key))
+		})
+	}
+}
+
+func TestNewConfig_StrictDecoding(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "nested logging typo",
+			yaml: `version: 2
+settings:
+  logging:
+    levl: debug
+groups:
+  - { name: a, command: echo }
+flows:
+  f:
+    steps:
+      - run: [a]
+`,
+			wantErr: "line 4: field levl not found",
+		},
+		{
+			name: "v1 documents keep the schema-version error",
+			yaml: `version: 1
+groups:
+  - { name: x, command: echo }
+execution:
+  - group: x
+`,
+			wantErr: "unsupported schema version 1",
+		},
+		{
+			name: "custom run entry error is preserved",
+			yaml: `version: 2
+groups:
+  - { name: a, command: echo }
+flows:
+  f:
+    mode: dag
+    run:
+      - { group: a, command: echo }
+`,
+			wantErr: `run entry: unexpected key "command"`,
+		},
+		{
+			name: "custom commands entry error is preserved",
+			yaml: `version: 2
+groups:
+  - name: a
+    commands:
+      - { command: echo, shell: sh }
+flows:
+  f:
+    steps:
+      - run: [a]
+`,
+			wantErr: `commands entry: unexpected key "shell"`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewConfig([]byte(tc.yaml))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
 	}
 }

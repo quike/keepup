@@ -1,0 +1,13 @@
+---
+# Invalid: "timout" is a typo for "timeout". Strict decoding must reject it
+# instead of silently running the step without a deadline.
+version: 2
+
+groups:
+  - { name: a, command: echo }
+
+flows:
+  f:
+    steps:
+      - run: [a]
+        timout: 5s

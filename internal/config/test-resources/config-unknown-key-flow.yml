@@ -1,0 +1,13 @@
+---
+# Invalid: "retry" is a typo for "retries". Strict decoding must reject it
+# instead of silently running the flow without retries.
+version: 2
+
+groups:
+  - { name: a, command: echo }
+
+flows:
+  f:
+    retry: 2
+    steps:
+      - run: [a]

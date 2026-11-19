@@ -1,0 +1,14 @@
+---
+# Invalid: "skipif" is a typo for "skip-if". Strict decoding must reject it
+# instead of silently running the group unconditionally.
+version: 2
+
+groups:
+  - name: a
+    command: echo
+    skipif: "true"
+
+flows:
+  f:
+    steps:
+      - run: [a]

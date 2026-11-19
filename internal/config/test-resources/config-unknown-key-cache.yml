@@ -1,0 +1,16 @@
+---
+# Invalid: "write" is a typo for "writes". Strict decoding must reject it
+# instead of silently caching without checking outputs.
+version: 2
+
+groups:
+  - name: a
+    command: echo
+    cache:
+      reads: ["*.go"]
+      write: ["bin/a"]
+
+flows:
+  f:
+    steps:
+      - run: [a]

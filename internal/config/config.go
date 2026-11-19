@@ -313,7 +313,10 @@ func decodeBool(val *yaml.Node, key string, dst *bool) error {
 // NewConfig parses YAML bytes into a Config and validates the schema.
 func NewConfig(b []byte) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(b, &cfg); err != nil {
+	if err := decodeStrict(b, &cfg); err != nil {
+		if versionErr := checkDeclaredVersion(b); versionErr != nil {
+			return nil, versionErr
+		}
 		return nil, fmt.Errorf("unmarshal configuration: %w", err)
 	}
 	if err := cfg.normalizeAndValidate(); err != nil {
@@ -346,10 +349,7 @@ func (c *Config) normalizeAndValidate() error {
 		return nil
 	}
 	if c.Version != SchemaVersion {
-		return fmt.Errorf(
-			"unsupported schema version %d: this binary only supports version %d",
-			c.Version, SchemaVersion,
-		)
+		return unsupportedVersionError(c.Version)
 	}
 
 	groupIndex, err := c.indexGroups()

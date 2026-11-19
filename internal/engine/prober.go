@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // Prober evaluates a gating predicate. A nil error means the predicate
@@ -17,15 +18,22 @@ type Prober interface {
 }
 
 // ShellProber runs predicates through the platform shell. Output is discarded;
-// only the exit status matters.
-type ShellProber struct{}
+// only the exit status matters. Cancellation follows the same process-group
+// semantics as ShellRunner.
+type ShellProber struct {
+	// KillGrace is the SIGTERM-to-SIGKILL grace on cancel; zero means
+	// DefaultKillGrace.
+	KillGrace time.Duration
+	// Groups, if set, tracks running predicates so they can be force-killed.
+	Groups *ProcessGroups
+}
 
 // Probe runs script via the platform shell and returns its exit status as an
 // error (nil on success).
-func (ShellProber) Probe(ctx context.Context, script string, env map[string]string) error {
+func (p ShellProber) Probe(ctx context.Context, script string, env map[string]string) error {
 	cmd := exec.CommandContext(ctx, pickShell(""), shellFlag(), script) //nolint:gosec // user-declared predicate
 	cmd.Env = mergeEnvs(os.Environ(), env)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	return cmd.Run()
+	return runInGroup(cmd, p.KillGrace, p.Groups)
 }

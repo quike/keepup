@@ -21,7 +21,7 @@ func (e *Engine) evalWhen(expr string, baseline map[string]result.RunResult) (bo
 		return false, err
 	}
 	switch strings.TrimSpace(strings.ToLower(out)) {
-	case "", "false", "0", "no", "off": //nolint:goconst // falsey-literal set
+	case "", "false", "0", "no", "off":
 		return false, nil
 	default:
 		return true, nil

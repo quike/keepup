@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -42,6 +43,21 @@ type Config struct {
 	Groups   []Group           `yaml:"groups"`
 	Flows    map[string]Flow   `yaml:"flows"`
 	Default  string            `yaml:"default,omitempty"`
+}
+
+// schemaLocations names, in user terms, where each strictly decoded struct
+// sits in the YAML document. Unknown-key errors use it instead of Go type
+// names; add an entry here whenever a new struct joins the schema.
+// RunEntry and CommandSpec are absent: their UnmarshalYAML methods report
+// unknown keys themselves.
+var schemaLocations = map[reflect.Type]string{
+	reflect.TypeFor[Config]():   "at top level",
+	reflect.TypeFor[Settings](): "in settings",
+	reflect.TypeFor[Logging]():  "in logging",
+	reflect.TypeFor[Group]():    "in group",
+	reflect.TypeFor[Cache]():    "in cache",
+	reflect.TypeFor[Flow]():     "in flow",
+	reflect.TypeFor[Step]():     "in step",
 }
 
 // Logging configures the keepup logger.

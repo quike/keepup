@@ -155,7 +155,7 @@ func TestValidateCmd_ReportsUnknownKey(t *testing.T) {
 	cmd.SetArgs([]string{"validate", "--config", cfgPath})
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "field defaults not found")
+	assert.Contains(t, err.Error(), `unknown key "defaults" at top level`)
 }
 
 func TestVerboseDumpsConfig(t *testing.T) {

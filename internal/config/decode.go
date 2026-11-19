@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 
 	"go.yaml.in/yaml/v3"
 )
 
 // decodeStrict decodes the first YAML document in data into out, rejecting
 // any mapping key that has no matching struct field. The resulting error
-// names the key and its line (e.g. "line 9: field skipif not found in type
-// config.Group"), so a typo fails loudly instead of silently disabling a
-// feature. An empty document decodes to the zero value.
+// names the key, its line and its place in the schema (e.g. `line 9: unknown
+// key "skipif" in group`), so a typo fails loudly instead of silently
+// disabling a feature. An empty document decodes to the zero value.
 //
 // KnownFields only governs the reflective struct decoder. The custom
 // UnmarshalYAML methods (RunEntry, CommandSpec) walk their mapping keys by
@@ -23,9 +24,43 @@ func decodeStrict(data []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		return err
+		return humanizeDecodeError(err)
 	}
 	return nil
+}
+
+// unknownFieldRE matches the yaml library's unknown-key report, e.g.
+// "line 9: field skipif not found in type config.Group".
+var unknownFieldRE = regexp.MustCompile(`^line (\d+): field (.+) not found in type (\S+)$`)
+
+// humanizeDecodeError rewrites unknown-key entries of a *yaml.TypeError so
+// they name the key and its place in the schema instead of a Go type:
+// `line 9: unknown key "skipif" in group`. Every other entry, and every other
+// error, passes through unchanged.
+func humanizeDecodeError(err error) error {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err
+	}
+	out := make([]string, len(te.Errors))
+	for i, msg := range te.Errors {
+		out[i] = humanizeUnknownField(msg)
+	}
+	return &yaml.TypeError{Errors: out}
+}
+
+func humanizeUnknownField(msg string) string {
+	m := unknownFieldRE.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+	line, key, typeName := m[1], m[2], m[3]
+	for t, where := range schemaLocations {
+		if t.String() == typeName {
+			return fmt.Sprintf("line %s: unknown key %q %s", line, key, where)
+		}
+	}
+	return msg
 }
 
 // checkDeclaredVersion leniently reads only the top-level version: and

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -932,21 +931,21 @@ func TestLoadConfig_RejectsUnknownKeys(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
-		key  string
-		line int
+		want string
 	}{
-		{"top level", "./test-resources/config-unknown-key-top-level.yml", "defaults", 9},
-		{"settings", "./test-resources/config-unknown-key-settings.yml", "max_concurrency", 7},
-		{"group", "./test-resources/config-unknown-key-group.yml", "skipif", 9},
-		{"cache", "./test-resources/config-unknown-key-cache.yml", "write", 11},
-		{"flow", "./test-resources/config-unknown-key-flow.yml", "retry", 11},
-		{"step", "./test-resources/config-unknown-key-step.yml", "timout", 13},
+		{"top level", "./test-resources/config-unknown-key-top-level.yml", `line 9: unknown key "defaults" at top level`},
+		{"settings", "./test-resources/config-unknown-key-settings.yml", `line 7: unknown key "max_concurrency" in settings`},
+		{"group", "./test-resources/config-unknown-key-group.yml", `line 9: unknown key "skipif" in group`},
+		{"cache", "./test-resources/config-unknown-key-cache.yml", `line 11: unknown key "write" in cache`},
+		{"flow", "./test-resources/config-unknown-key-flow.yml", `line 11: unknown key "retry" in flow`},
+		{"step", "./test-resources/config-unknown-key-step.yml", `line 13: unknown key "timout" in step`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := LoadConfig(tc.path)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), fmt.Sprintf("line %d: field %s not found", tc.line, tc.key))
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NotContains(t, err.Error(), "config.", "errors must not leak Go type names")
 		})
 	}
 }
@@ -971,7 +970,7 @@ flows:
     steps:
       - run: [a]
 `,
-			wantErr: "line 4: field levl not found",
+			wantErr: `line 4: unknown key "levl" in logging`,
 		},
 		{
 			name: "v1 documents keep the schema-version error",

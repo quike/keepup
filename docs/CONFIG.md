@@ -35,7 +35,7 @@ Top-level keys at a glance:
 Keys are strict everywhere in the schema: an unknown or misspelled key (at
 the top level or inside `settings`, a group, a `cache` block, a flow or a step)
 is a load error that names the key and its line, for example
-`line 9: field skipif not found in type config.Group`. `keepup validate`
+`line 9: unknown key "skipif" in group`. `keepup validate`
 reports it without running anything.
 
 ---

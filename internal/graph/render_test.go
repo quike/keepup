@@ -181,3 +181,19 @@ default: f
 	assert.Contains(t, got, "my_group_v2", "identifier is sanitized")
 	assert.Contains(t, got, "my-group.v2", "label keeps the real name")
 }
+
+func TestRender_MermaidOrderingEdgeIsDashed(t *testing.T) {
+	t.Parallel()
+	got := render(t, dagAfterCfg, "ci", FormatMermaid)
+
+	assert.Contains(t, got, "lint -.-> test", "an after: edge is dashed")
+	assert.Contains(t, got, "build --> test", "a data edge stays solid")
+}
+
+func TestRender_DotOrderingEdgeIsDashed(t *testing.T) {
+	t.Parallel()
+	got := render(t, dagAfterCfg, "ci", FormatDot)
+
+	assert.Contains(t, got, `"lint" -> "test" [style=dashed];`, "an after: edge is dashed")
+	assert.Contains(t, got, `"build" -> "test";`, "a data edge stays solid")
+}

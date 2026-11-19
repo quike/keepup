@@ -170,3 +170,49 @@ flows:
 		t.Fatalf("roots = %v, want [a c]", p.Roots)
 	}
 }
+
+func TestBuild_DAGMode_AfterAddsOrderingEdge(t *testing.T) {
+	cfg := validCfg(t, `
+version: 2
+groups:
+  - { name: lint, command: echo }
+  - { name: build, command: echo }
+  - { name: test, command: echo, params: ['{{ output "build" }}'] }
+flows:
+  f:
+    mode: dag
+    run:
+      - lint
+      - build
+      - { group: test, after: [lint] }
+`)
+	p, err := Build(cfg, "f")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"lint", "build"}, p.Roots)
+	assert.Equal(t, []string{"build", "lint"}, p.Predecessors["test"])
+	assert.Equal(t, []string{"test"}, p.Successors["lint"])
+	assert.Equal(t, EdgeData, p.EdgeKind("build", "test"))
+	assert.Equal(t, EdgeOrder, p.EdgeKind("lint", "test"))
+}
+
+// An after: naming a group whose output is also consumed adds nothing: the
+// data edge already orders the pair and is the stronger contract.
+func TestBuild_DAGMode_DataEdgeWinsOverAfter(t *testing.T) {
+	cfg := validCfg(t, `
+version: 2
+groups:
+  - { name: build, command: echo }
+  - { name: test, command: echo, params: ['{{ output "build" }}'] }
+flows:
+  f:
+    mode: dag
+    run:
+      - build
+      - { group: test, after: [build, build] }
+`)
+	p, err := Build(cfg, "f")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"build"}, p.Predecessors["test"])
+	assert.Equal(t, []string{"test"}, p.Successors["build"])
+	assert.Equal(t, EdgeData, p.EdgeKind("build", "test"))
+}

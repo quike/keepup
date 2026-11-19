@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/plan"
 )
 
 func load(t *testing.T, body string) *config.Config {
@@ -141,4 +142,31 @@ func TestBuild_IsDeterministic(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, got)
 	}
+}
+
+const dagAfterCfg = `
+version: 2
+groups:
+  - { name: lint, command: echo }
+  - { name: build, command: echo }
+  - { name: test, command: echo, params: ['{{ output "build" }}'] }
+flows:
+  ci:
+    mode: dag
+    run:
+      - lint
+      - build
+      - { group: test, after: [lint] }
+`
+
+// after: edges are drawn too, and kept apart from data edges so a reader can
+// tell "waits for" from "consumes".
+func TestBuild_AfterIsAnOrderingEdge(t *testing.T) {
+	t.Parallel()
+	m, err := Build(load(t, dagAfterCfg), "ci")
+	require.NoError(t, err)
+	assert.Equal(t, []Edge{
+		{From: "build", To: "test", Kind: plan.EdgeData},
+		{From: "lint", To: "test", Kind: plan.EdgeOrder},
+	}, m.Edges)
 }

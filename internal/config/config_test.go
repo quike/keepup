@@ -717,7 +717,7 @@ flows:
     mode: dag
     run:
       - [nested]`,
-			wantErr: "must be a group name or a {group, when} map",
+			wantErr: "must be a group name or a {group, when, after} map",
 		},
 		{
 			name: "empty scalar group",

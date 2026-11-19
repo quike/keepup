@@ -3,10 +3,12 @@ digraph "ci" {
   rankdir=TB;
   node [shape=box];
   "build" [label="build\nCompile the binary", shape=cylinder];
+  "lint" [label="lint\nStatic checks"];
   "test" [label="test\nUnit tests"];
   "deploy" [label="deploy\nShip it", style=dashed];
   "notify" [label="notify\nAnnounce the release"];
   "build" -> "test";
   "deploy" -> "notify";
+  "lint" -> "test" [style=dashed];
   "test" -> "deploy";
 }

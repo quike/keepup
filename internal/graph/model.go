@@ -22,10 +22,13 @@ type Node struct {
 	Cacheable   bool
 }
 
-// Edge is a data dependency, drawn from the producing group to the consumer.
+// Edge is a dependency drawn from the group that must finish first to the
+// group waiting on it. Kind tells a data edge (the consumer reads the
+// producer's output) from a dag after: ordering edge.
 type Edge struct {
 	From string
 	To   string
+	Kind plan.EdgeKind
 }
 
 // Wave is one step-mode execution wave, in declared order.
@@ -74,12 +77,13 @@ func Build(cfg *config.Config, flowName string) (*Model, error) {
 }
 
 // dagEdges reads the scheduler's own predecessor map, so every dependency it
-// enforces — including those a when: predicate introduces — is drawn.
+// enforces — including those a when: predicate or an after: list introduces —
+// is drawn.
 func dagEdges(p *plan.Plan) []Edge {
 	var edges []Edge
 	for _, to := range p.Members {
 		for _, from := range p.Predecessors[to] {
-			edges = append(edges, Edge{From: from, To: to})
+			edges = append(edges, Edge{From: from, To: to, Kind: p.EdgeKind(from, to)})
 		}
 	}
 	return sortEdges(edges)

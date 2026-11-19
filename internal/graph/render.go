@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/quike/keepup/internal/config"
+	"github.com/quike/keepup/internal/plan"
 )
 
 // Format selects the diagram syntax.
@@ -56,7 +57,7 @@ func renderMermaid(w io.Writer, m *Model) error {
 	}
 
 	for _, e := range m.Edges {
-		b.printf("  %s --> %s\n", ident(e.From), ident(e.To))
+		b.printf("  %s %s %s\n", ident(e.From), mermaidArrow(e.Kind), ident(e.To))
 	}
 
 	if conditional := m.conditionalNodes(); len(conditional) > 0 {
@@ -109,7 +110,7 @@ func renderDot(w io.Writer, m *Model) error {
 	}
 
 	for _, e := range m.Edges {
-		b.printf("  %q -> %q;\n", e.From, e.To)
+		b.printf("  %q -> %q%s;\n", e.From, e.To, dotEdgeAttrs(e.Kind))
 	}
 	b.printf("}\n")
 	return b.err
@@ -129,6 +130,22 @@ func dotBarriers(waves []Wave) string {
 			prev.Groups[0], cur.Groups[0], prev.Index, cur.Index)
 	}
 	return b.String()
+}
+
+// mermaidArrow draws a data edge solid and an after: ordering edge dashed.
+func mermaidArrow(k plan.EdgeKind) string {
+	if k == plan.EdgeOrder {
+		return "-.->"
+	}
+	return "-->"
+}
+
+// dotEdgeAttrs mirrors mermaidArrow: only an ordering edge carries a style.
+func dotEdgeAttrs(k plan.EdgeKind) string {
+	if k == plan.EdgeOrder {
+		return " [style=dashed]"
+	}
+	return ""
 }
 
 func dotNode(n *Node) string {

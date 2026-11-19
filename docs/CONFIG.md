@@ -569,8 +569,9 @@ is rejected at config-load. A skipped step's groups produce no output.
 ### DAG mode
 
 DAG mode drops explicit steps. Groups schedule topologically from the data
-graph formed by `{{ output.X }}` references — a group starts the moment all
-groups it references have completed. Independent branches run in parallel
+graph formed by `{{ output.X }}` references, plus any explicit `after:`
+ordering edges — a group starts the moment every group it references or lists
+in `after:` has completed. Independent branches run in parallel
 automatically.
 
 ```yaml
@@ -578,16 +579,57 @@ flows:
   ci-dag:
     description: "Same shape, scheduled topologically"
     mode: dag
-    run: [vet, build, test, package]
+    run:
+      - vet
+      - build
+      - { group: test, after: [vet, build] }
+      - { group: package, after: [test] }
 ```
 
-For DAG mode the engine validates that the data graph is **acyclic** before
-running anything.
+None of these groups read each other's output, so without `after:` all four
+would start at once. A bare `run: [vet, build, test, package]` is **not**
+ordered: list order means nothing in dag mode.
+
+For DAG mode the engine validates that the graph — data references and
+`after:` edges together — is **acyclic** before running anything.
+
+#### Ordering edges: `after:`
+
+Some dependencies carry no data: "run migrations after the database is up",
+"test after lint". List them on the run entry with `after:`:
+
+```yaml
+flows:
+  ci:
+    mode: dag
+    run:
+      - lint
+      - db-up
+      - { group: migrate, after: [db-up] }
+      - { group: test, after: [lint, migrate] }
+```
+
+- `after:` lives on the flow's run entry, not on the group, so the same group
+  can be ordered differently in other flows.
+- Every name must be a group listed in the same flow's `run:`; a group cannot
+  list itself. A cycle — through `after:` edges, data references, or a mix of
+  the two — is rejected at load time.
+- `after:` adds no data: it does not make `{{ output "x" }}` legal, and it
+  does not change the group's cache fingerprint.
+- If an `after:` predecessor **fails**, the flow aborts and its dependents
+  never start, exactly as with data dependencies.
+- If an `after:` predecessor is **skipped** (by its own `when:` or by a
+  cascade), its dependents still run: nothing they need is missing. Only data
+  edges cascade a skip (see below).
+- `after:` is dag-only. Step mode orders groups with `steps:`; a flow that
+  uses `run:` entries without `mode: dag` is rejected.
+- Listing a group in `after:` whose output the entry already consumes is
+  harmless; the data edge wins.
 
 #### Per-group `when:` in dag mode
 
 In dag mode each `run:` entry is either a bare group name (string) or a map
-with `group:` and `when:` keys:
+with a `group:` key and optional `when:` and `after:` keys:
 
 ```yaml
 flows:
@@ -601,8 +643,8 @@ flows:
       - report
 ```
 
-The map form accepts **only** `group` and `when` — no `command`, `params`, or
-other group-definition keys. Those fields belong on the group definition in
+The map form accepts **only** `group`, `when`, and `after` — no `command`,
+`params`, or other group-definition keys. Those fields belong on the group definition in
 `groups:`. An unexpected key is a config error at load time.
 
 `group:` is the name of a group already declared in the top-level `groups:`
@@ -619,6 +661,8 @@ downstream of it — anything that depends on its output, transitively — is al
 skipped. A group cannot run on a missing producer's output. Cascade-skipped
 groups report `"reason":"upstream \"<name>\" skipped"` in their `group.end`
 event. A skip is not a failure: the flow can still end with `"status":"ok"`.
+The cascade follows data edges only: a group that merely lists a skipped
+group in `after:` still runs.
 
 Existing bare-string `run:` entries are unchanged — the map form is purely
 additive.
@@ -748,6 +792,7 @@ What the diagram shows:
   but they explain it.
 - **Dag mode** draws the dependency edges the scheduler enforces, including
   those introduced by a `when:` predicate reading another group's output.
+  Data edges are solid; `after:` ordering edges are dashed.
 - **Conditional** groups (dag `when:`) are dashed; a `when:`-gated step says so
   in its wave label.
 - **Cacheable** groups — those declaring `cache:` — are drawn as cylinders.
@@ -790,9 +835,13 @@ flows:
       - run: [package]
 
   ci-dag:
-    description: "Same pipeline, scheduled by data deps"
+    description: "Same pipeline, scheduled as a DAG"
     mode: dag
-    run: [vet, build, test, package]
+    run:
+      - vet
+      - build
+      - { group: test, after: [vet, build] }
+      - { group: package, after: [test] }
 
   quick:
     description: "Just build, for inner-loop iteration"

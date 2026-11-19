@@ -331,7 +331,7 @@ $ keepup run release --config keepup.yml --events -
 {"event":"flow.start","flow":"release","mode":"dag"}
 {"event":"group.end","group":"deploy","status":"skipped","reason":"when"}
 {"event":"group.end","group":"notify","status":"skipped","reason":"upstream \"deploy\" skipped"}
-{"event":"group.end","group":"build","status":"ok","durationMs":2}
+{"event":"group.end","group":"build","status":"ok","durationMs":2,"exitCode":0}
 {"event":"flow.end","flow":"release","status":"ok","durationMs":2}
 ```
 
@@ -537,15 +537,17 @@ keepup run ci --events run.jsonl
 ```json
 {"event":"flow.start","flow":"ci","mode":"step","time":"..."}
 {"event":"group.start","group":"tests","time":"..."}
-{"event":"group.end","group":"tests","status":"ok","durationMs":1240,"time":"..."}
+{"event":"group.end","group":"tests","status":"ok","durationMs":1240,"exitCode":0,"time":"..."}
 {"event":"group.start","group":"deploy","time":"..."}
 {"event":"group.end","group":"deploy","status":"skipped","durationMs":0,"time":"..."}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":1310,"time":"..."}
 ```
 
 Each line tells you **what happened** (`event`), **to which group**, **how it
-ended** (`status`: `ok` / `failed` / `skipped` / `cache-hit` / `dry-run`), and
-**how long it took** (`durationMs`).
+ended** (`status`: `ok` / `failed` / `skipped` / `cache-hit` / `dry-run`),
+**how long it took** (`durationMs`), and, for a group whose commands actually
+ran, **its exit code** (`exitCode`; skipped, cache-hit, and dry-run groups omit
+it).
 
 **Why separate from logs?** Logs are for humans (prose, colors, wording that may
 change). Events are for machines (fixed fields, stable shape). Parsing human

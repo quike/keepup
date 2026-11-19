@@ -70,6 +70,32 @@ Common flags:
 - `-d, --dry-run` — log what would run; never invoke the runner
 - `-v, --verbose` — dump the parsed config before running
 - `--no-cache` (run only) — ignore cached results and run every group
+- `--exit-code` (run only) — exit with the failing command's own exit code
+  instead of 1 (see [Exit codes](#exit-codes))
+
+## Exit codes
+
+keepup's exit status tells CI and wrapper scripts *why* a run stopped:
+
+| Code | Meaning                                                                                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Success.                                                                                                                                                     |
+| 1    | A group failed. With `--exit-code`, the failing command's own exit code instead (still 1 when the command left none, e.g. it was not found or was killed). |
+| 2    | Config, validation, or usage error: missing or invalid config file, bad YAML or reference, unknown flow, unknown command or flag, wrong number of arguments. |
+| 124  | A group exceeded its `timeout:` (the convention of `timeout(1)`).                                                                                            |
+| 130  | The run was interrupted (Ctrl-C / SIGINT or SIGTERM).                                                                                                        |
+
+When several apply, the most specific wins: an interrupt (130) over a timeout
+(124) over a group failure. Retries count only their last attempt: a group
+that timed out once and then failed normally exits 1.
+
+```sh
+keepup run ci --exit-code; echo $?   # e.g. 3 when a test command exits 3
+```
+
+A failed group is still recorded: its `group.end` event carries
+`"status":"failed"` and the command's `exitCode`, and its stored result has
+`Status: "failed"` and the real `ExitCode`.
 
 ## Shell completion
 
@@ -141,11 +167,11 @@ With `--events -`, stdout carries only JSON: the "watching N dir(s)…" banner, 
 
 ```
 {"event":"flow.start","flow":"ci","mode":"step"}
-{"event":"group.end","group":"build","status":"ok","durationMs":1}
+{"event":"group.end","group":"build","status":"ok","durationMs":1,"exitCode":0}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":1}
 {"event":"watch.trigger","flow":"ci","files":["x.txt"]}
 {"event":"flow.start","flow":"ci","mode":"step"}
-{"event":"group.end","group":"build","status":"ok","durationMs":4}
+{"event":"group.end","group":"build","status":"ok","durationMs":4,"exitCode":0}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":4}
 ```
 
@@ -251,10 +277,10 @@ When tests pass, all groups run:
 
 ```
 {"event":"flow.start","flow":"ci","mode":"dag"}
-{"event":"group.end","group":"build","status":"ok","durationMs":3}
-{"event":"group.end","group":"test","status":"ok","durationMs":4}
-{"event":"group.end","group":"deploy","status":"ok","durationMs":3}
-{"event":"group.end","group":"report","status":"ok","durationMs":3}
+{"event":"group.end","group":"build","status":"ok","durationMs":3,"exitCode":0}
+{"event":"group.end","group":"test","status":"ok","durationMs":4,"exitCode":0}
+{"event":"group.end","group":"deploy","status":"ok","durationMs":3,"exitCode":0}
+{"event":"group.end","group":"report","status":"ok","durationMs":3,"exitCode":0}
 {"event":"flow.end","flow":"ci","status":"ok","durationMs":11}
 ```
 
@@ -265,7 +291,7 @@ When the predicate is falsey (e.g. `DEPLOY` unset in an env-gated flow),
 {"event":"flow.start","flow":"release","mode":"dag"}
 {"event":"group.end","group":"deploy","status":"skipped","reason":"when"}
 {"event":"group.end","group":"notify","status":"skipped","reason":"upstream \"deploy\" skipped"}
-{"event":"group.end","group":"build","status":"ok","durationMs":2}
+{"event":"group.end","group":"build","status":"ok","durationMs":2,"exitCode":0}
 {"event":"flow.end","flow":"release","status":"ok","durationMs":2}
 ```
 

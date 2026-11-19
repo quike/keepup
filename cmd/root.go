@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,12 @@ type runtimeOpts struct {
 	dryRun     bool
 	verbose    bool
 	noCache    bool
+	// exitCode (--exit-code) makes a failed group's own exit status the
+	// process exit status instead of 1.
+	exitCode bool
+	// dispatched records that cobra accepted the invocation and handed it to
+	// a command; an error without it is a usage error.
+	dispatched bool
 
 	cfg *config.Config
 	log logger.Logger
@@ -48,8 +55,6 @@ type runtimeOpts struct {
 // os.Exit on the returned value.
 func Execute() int {
 	groups := engine.NewProcessGroups()
-	root := newRootCmdWithProcessGroups(os.Stdout, os.Stderr, groups)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	signals := make(chan os.Signal, 1)
@@ -65,24 +70,46 @@ func Execute() int {
 		stderr:    os.Stderr,
 	}.run(done)
 
-	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	return run(ctx, os.Args[1:], os.Stdout, os.Stderr, groups)
+}
+
+// run executes one CLI invocation and returns its exit code (see exitCode).
+// groups (may be nil) tracks running commands for the force-kill on a
+// repeated interrupt. It is the only place errors are reported: each is
+// printed once to stderr, followed by the command's usage text when the
+// invocation itself was wrong.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, groups *engine.ProcessGroups) int {
+	opts := &runtimeOpts{procGroups: groups}
+	root := buildRootCmd(opts, stdout, stderr)
+	root.SetArgs(args)
+	cmd, err := root.ExecuteContextC(ctx)
+	if err != nil {
+		if !opts.dispatched {
+			err = &usageError{err: err}
+		}
+		reportError(stderr, cmd, err)
 	}
-	return 0
+	return exitCode(err, opts.exitCode)
+}
+
+// reportError prints err, plus cmd's usage text for a usage error.
+func reportError(w io.Writer, cmd *cobra.Command, err error) {
+	fmt.Fprintln(w, "Error:", err)
+	var usage *usageError
+	if errors.As(err, &usage) {
+		fmt.Fprint(w, "\n"+cmd.UsageString())
+	}
 }
 
 // newRootCmd builds a fresh root command tree wired to the given writers.
 // It returns a brand-new tree on each call so tests can run safely in parallel.
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
-	return newRootCmdWithProcessGroups(stdout, stderr, nil)
+	return buildRootCmd(&runtimeOpts{}, stdout, stderr)
 }
 
-// newRootCmdWithProcessGroups is newRootCmd with the engines' running process
-// groups registered in groups, so the signal handler can force-kill them.
-func newRootCmdWithProcessGroups(stdout, stderr io.Writer, groups *engine.ProcessGroups) *cobra.Command {
-	opts := &runtimeOpts{procGroups: groups}
-
+// buildRootCmd builds the command tree around opts, which receives the parsed
+// CLI state.
+func buildRootCmd(opts *runtimeOpts, stdout, stderr io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:   appName,
 		Short: "Composable task runner with reusable groups and named flows",
@@ -93,6 +120,15 @@ func newRootCmdWithProcessGroups(stdout, stderr io.Writer, groups *engine.Proces
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	// run() reports errors (and usage, for usage errors) exactly once; cobra's
+	// own printing would duplicate them and send usage text to stdout.
+	root.SilenceErrors = true
+	root.SilenceUsage = true
+	// Cobra runs this only after flags and arguments validated, so it marks
+	// the boundary between usage errors and errors from the command itself.
+	// No subcommand may define its own PersistentPreRun, or it would shadow
+	// this one (guarded by TestPersistentPreRun_OnlyOnRoot).
+	root.PersistentPreRun = func(*cobra.Command, []string) { opts.dispatched = true }
 
 	defaultHelp := "Path to config file (default is ~/.config/" + appName + "/" + appName + ".yml)"
 	root.PersistentFlags().StringVarP(&opts.configFile, "config", "c", "", defaultHelp)
@@ -139,6 +175,8 @@ func newRunCmd(opts *runtimeOpts) *cobra.Command {
 	}
 	cmd.ValidArgsFunction = completeFlows(opts)
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "Ignore cached results; run every group")
+	cmd.Flags().BoolVar(&opts.exitCode, "exit-code", false,
+		"Exit with the failing command's own exit code instead of 1")
 	cmd.Flags().StringVar(&eventsPath, "events", "", "Write a JSON event stream to this file ('-' for stdout)")
 	return cmd
 }
@@ -217,7 +255,8 @@ func newListCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 			case listKindGroups:
 				return printGroups(stdout, opts.cfg)
 			default:
-				return fmt.Errorf("unknown list target %q (expected %q or %q)", kind, listKindFlows, listKindGroups)
+				return &usageError{err: fmt.Errorf("unknown list target %q (expected %q or %q)",
+					kind, listKindFlows, listKindGroups)}
 			}
 		},
 	}

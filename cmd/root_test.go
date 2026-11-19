@@ -221,10 +221,10 @@ func TestExecute_Help(t *testing.T) {
 	assert.Equal(t, 0, code)
 }
 
-func TestExecute_BadFlagReturnsNonZero(t *testing.T) {
+func TestExecute_MissingConfigExitsWithUsageCode(t *testing.T) {
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"keepup", "run", "--config", "/no/such/path/keepup.yml"}
 	code := Execute()
-	assert.Equal(t, 1, code)
+	assert.Equal(t, 2, code)
 }

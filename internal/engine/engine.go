@@ -154,13 +154,13 @@ func (e *Engine) applyDefaultProcessCollaborators() {
 // Outputs returns the captured outputs (populated after RunFlow completes).
 func (e *Engine) Outputs() OutputStore { return e.outputs }
 
-// RunFlow executes the named Flow, honoring ctx cancellation.
+// RunFlow executes the named Flow (the default when flowName is empty),
+// honoring ctx cancellation. An unknown flow is a *config.Error; a failure
+// after ctx was canceled is a *CanceledError; see errors.go for the rest.
 func (e *Engine) RunFlow(ctx context.Context, flowName string) error {
-	if flowName == "" {
-		if e.cfg.Default == "" {
-			return fmt.Errorf("no flow specified and no default declared")
-		}
-		flowName = e.cfg.Default
+	flowName, err := e.cfg.ResolveFlow(flowName)
+	if err != nil {
+		return err
 	}
 	p, err := plan.Build(e.cfg, flowName)
 	if err != nil {
@@ -179,6 +179,7 @@ func (e *Engine) RunFlow(ctx context.Context, flowName string) error {
 	default:
 		err = fmt.Errorf("flow %q: unknown mode %q", flowName, p.Mode)
 	}
+	err = canceled(ctx, err)
 	status := StatusOK
 	if err != nil {
 		status = StatusFailed
@@ -309,13 +310,14 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	start := time.Now()
 	e.emitter.Emit(Event{Event: EventGroupStart, Group: group.Name})
 	status := StatusOK
+	var exitCode *int // set only once the commands actually ran
 	defer func() {
 		if err != nil {
 			status = StatusFailed
 		}
 		e.emitter.Emit(Event{
 			Event: EventGroupEnd, Group: group.Name, Status: status,
-			DurationMS: msSince(start), Err: errString(err),
+			DurationMS: msSince(start), Err: errString(err), ExitCode: exitCode,
 		})
 	}()
 
@@ -362,9 +364,12 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 		e.log.Info("running group", "group", group.Name, "command", s.Command, "params", s.Params)
 	}
 	out, err := e.execWithEnvelope(ctx, group, expanded, env)
+	exitCode = &out.ExitCode
 	if err != nil {
 		e.log.Error("group failed", "group", group.Name, "err", err.Error(), "output", out.Output)
-		return err
+		out.Status = result.StatusFailed
+		e.outputs.Set(group.Name, out)
+		return &GroupFailedError{Group: group.Name, ExitCode: out.ExitCode, Err: err}
 	}
 	e.log.Trace("group output", "group", group.Name, "output", out.Output)
 	// Runner sets Status to result.StatusOK on success; trust it so a future
@@ -387,12 +392,11 @@ func (e *Engine) execWithEnvelope(
 		err error
 	)
 	for attempt := 1; attempt <= attempts; attempt++ {
-		runCtx := ctx
-		cancel := context.CancelFunc(func() {})
-		if env.timeout > 0 {
-			runCtx, cancel = context.WithTimeout(ctx, env.timeout)
-		}
+		runCtx, cancel := withTimeout(ctx, env.timeout)
 		out, err = e.runSequence(runCtx, group, commands)
+		if err != nil {
+			err = timedOut(runCtx, err)
+		}
 		cancel()
 		if err == nil {
 			return out, nil

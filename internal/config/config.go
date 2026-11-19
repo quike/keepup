@@ -357,33 +357,35 @@ func decodeBool(val *yaml.Node, key string, dst *bool) error {
 	return nil
 }
 
-// NewConfig parses YAML bytes into a Config and validates the schema.
+// NewConfig parses YAML bytes into a Config and validates the schema. Every
+// failure is an *Error.
 func NewConfig(b []byte) (*Config, error) {
 	var cfg Config
 	if err := decodeStrict(b, &cfg); err != nil {
 		if versionErr := checkDeclaredVersion(b); versionErr != nil {
-			return nil, versionErr
+			return nil, invalid(versionErr)
 		}
-		return nil, fmt.Errorf("unmarshal configuration: %w", err)
+		return nil, invalid(fmt.Errorf("unmarshal configuration: %w", err))
 	}
 	if err := cfg.normalizeAndValidate(); err != nil {
-		return nil, err
+		return nil, invalid(err)
 	}
 	return &cfg, nil
 }
 
 // LoadConfig reads a YAML config from disk. Supports a leading "~/" expansion.
+// Every failure, including a missing or unreadable file, is an *Error.
 func LoadConfig(path string) (*Config, error) {
 	if path == "" {
-		return nil, errors.New("config path is empty")
+		return nil, invalid(errors.New("config path is empty"))
 	}
 	expanded, err := expandHome(path)
 	if err != nil {
-		return nil, err
+		return nil, invalid(err)
 	}
 	data, err := os.ReadFile(filepath.Clean(expanded))
 	if err != nil {
-		return nil, fmt.Errorf("read config file %q: %w", expanded, err)
+		return nil, invalid(fmt.Errorf("read config file %q: %w", expanded, err))
 	}
 	return NewConfig(data)
 }
@@ -567,6 +569,22 @@ func (c *Config) GroupByName(name string) *Group {
 		}
 	}
 	return nil
+}
+
+// ResolveFlow returns the flow name a run should use: name itself when given,
+// otherwise the declared default. It fails with an *Error when name is not a
+// declared flow or when name is empty and no default is declared.
+func (c *Config) ResolveFlow(name string) (string, error) {
+	if name == "" {
+		if c.Default == "" {
+			return "", invalid(errors.New("no flow specified and no default declared"))
+		}
+		name = c.Default
+	}
+	if _, ok := c.Flows[name]; !ok {
+		return "", invalid(fmt.Errorf("flow %q not found", name))
+	}
+	return name, nil
 }
 
 // Members returns the groups referenced by a flow, regardless of mode.

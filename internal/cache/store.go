@@ -32,6 +32,8 @@ func (s *FileStore) Load(group string) (*Entry, bool) {
 }
 
 // Save writes the entry for a group, creating the cache directory if needed.
+// The write is atomic: readers (including other machines sharing cache-dir)
+// see either the previous entry or the new one, never a partial file.
 func (s *FileStore) Save(group string, e *Entry) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("create cache dir %q: %w", s.dir, err)
@@ -40,10 +42,37 @@ func (s *FileStore) Save(group string, e *Entry) error {
 	if err != nil {
 		return fmt.Errorf("encode cache entry: %w", err)
 	}
-	if err := os.WriteFile(s.path(group), data, 0o600); err != nil {
+	if err := writeFileAtomic(s.path(group), data); err != nil {
 		return fmt.Errorf("write cache entry: %w", err)
 	}
 	return nil
+}
+
+// writeFileAtomic writes data to a temp file beside path, fsyncs it, and
+// renames it into place. Same-directory temp files keep the rename on one
+// filesystem, where it replaces the target atomically. The temp file is
+// removed on any failure.
+func writeFileAtomic(path string, data []byte) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // path returns the on-disk file for a group, sanitizing the name so it is

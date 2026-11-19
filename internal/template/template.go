@@ -7,7 +7,7 @@
 // functions:
 //
 //	output "name"   → the captured stdout of a prior group
-//	env    "KEY"    → a value from the merged keepup environment
+//	env    "KEY"    → a value from Data.Env (never os.Getenv directly)
 //
 // A backward-compatibility shim rewrites the legacy "{{ output.X }}" form into
 // the function form "{{ output \"X\" }}" before parsing, so configs written
@@ -41,7 +41,7 @@ func normalize(s string) string {
 // Data is the context a template is rendered against.
 type Data struct {
 	Outputs map[string]result.RunResult // group name → structured run result
-	Env     map[string]string           // merged keepup environment
+	Env     map[string]string           // layered env (process < global < group < command), built by the caller
 }
 
 // Expander renders a templated string against Data. Implementations must be

@@ -7,6 +7,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/quike/keepup/internal/cache"
@@ -20,6 +21,7 @@ import (
 // Engine binds a parsed Config to a set of pluggable collaborators.
 type Engine struct {
 	cfg            *config.Config
+	processEnv     map[string]string
 	groups         map[string]config.Group
 	runner         Runner
 	prober         Prober
@@ -78,6 +80,14 @@ func WithDryRun(dry bool) Option { return func(e *Engine) { e.dryRun = dry } }
 // WithEmitter sets the structured event emitter (default: discard).
 func WithEmitter(em Emitter) Option { return func(e *Engine) { e.emitter = em } }
 
+// WithProcessEnv sets the process environment (KEY=VALUE pairs, as from
+// os.Environ) that forms the lowest env layer seen by templates and `when:`
+// predicates. Defaults to os.Environ() at construction; tests inject it to stay
+// hermetic. A nil slice means an empty process environment.
+func WithProcessEnv(environ []string) Option {
+	return func(e *Engine) { e.processEnv = parseEnviron(environ) }
+}
+
 // WithRetryBackoff overrides the base retry backoff (delay for attempt N is
 // base*N). Primarily useful in tests to avoid real sleeps.
 func WithRetryBackoff(d time.Duration) Option { return func(e *Engine) { e.retryBackoff = d } }
@@ -95,6 +105,7 @@ func New(cfg *config.Config, opts ...Option) *Engine {
 	}
 	e := &Engine{
 		cfg:            cfg,
+		processEnv:     parseEnviron(os.Environ()),
 		groups:         groups,
 		outputs:        NewMemoryOutputStore(),
 		expander:       template.NewExpander(),
@@ -192,12 +203,20 @@ func resolveEnvelope(flow *config.Flow, step *config.Step) envelope {
 }
 
 // expandCommands renders every command in the group's normalized list against
-// the available outputs/env. The expanded specs are what the runner, cache,
-// and logs all see.
-func (e *Engine) expandCommands(group *config.Group, data template.Data) ([]config.CommandSpec, error) {
+// the available outputs and the same layered env the command will run with.
+// A command's own env: values render against process < global < group; its
+// command, params, and dir additionally see those rendered command env values.
+// The expanded specs are what the runner, cache, and logs all see.
+func (e *Engine) expandCommands(group *config.Group, baseline map[string]result.RunResult) ([]config.CommandSpec, error) {
 	specs := group.CommandList()
 	expanded := make([]config.CommandSpec, len(specs))
+	groupData := template.Data{Outputs: baseline, Env: e.runtimeEnv(group.Env, nil)}
 	for i, s := range specs {
+		env, err := e.expandEnv(group.Name, s.Env, groupData)
+		if err != nil {
+			return nil, err
+		}
+		data := template.Data{Outputs: baseline, Env: e.runtimeEnv(group.Env, env)}
 		cmd, err := e.expander.Expand(s.Command, data)
 		if err != nil {
 			return nil, fmt.Errorf("group %q: expand command: %w", group.Name, err)
@@ -215,10 +234,6 @@ func (e *Engine) expandCommands(group *config.Group, data template.Data) ([]conf
 				return nil, fmt.Errorf("group %q: expand dir: %w", group.Name, err)
 			}
 		}
-		env, err := e.expandEnv(group.Name, s.Env, data)
-		if err != nil {
-			return nil, err
-		}
 		// Copy the spec so fields that need no expansion (Silent, IsShell, and
 		// anything added later) carry through instead of being dropped.
 		out := s
@@ -226,6 +241,14 @@ func (e *Engine) expandCommands(group *config.Group, data template.Data) ([]conf
 		expanded[i] = out
 	}
 	return expanded, nil
+}
+
+// runtimeEnv is the environment a command with the given group and command
+// env: layers runs with: the injected process env overlaid by the config's
+// declared env (config.DeclaredEnv owns the global < group < command order).
+// Templates and when: predicates read it so they see what the command gets.
+func (e *Engine) runtimeEnv(groupEnv, commandEnv map[string]string) map[string]string {
+	return overlay(e.processEnv, config.DeclaredEnv(e.cfg.Env, groupEnv, commandEnv))
 }
 
 // expandEnv renders each value of a per-command env map. Keys are literal.
@@ -269,9 +292,7 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 		})
 	}()
 
-	data := template.Data{Outputs: baseline, Env: e.cfg.Env}
-
-	expanded, err := e.expandCommands(group, data)
+	expanded, err := e.expandCommands(group, baseline)
 	if err != nil {
 		return err
 	}
@@ -287,13 +308,13 @@ func (e *Engine) runGroup(ctx context.Context, group *config.Group, baseline map
 	}
 
 	if group.Require != "" {
-		if err = e.prober.Probe(ctx, group.Require, e.cfg.Env); err != nil {
+		if err = e.prober.Probe(ctx, group.Require, config.DeclaredEnv(e.cfg.Env, nil, nil)); err != nil {
 			return fmt.Errorf("group %q: requirement %q not met: %w", group.Name, group.Require, err)
 		}
 	}
 
 	if group.SkipIf != "" {
-		if err = e.prober.Probe(ctx, group.SkipIf, e.cfg.Env); err == nil {
+		if err = e.prober.Probe(ctx, group.SkipIf, config.DeclaredEnv(e.cfg.Env, nil, nil)); err == nil {
 			e.outputs.Set(group.Name, result.RunResult{Status: result.StatusSkipped})
 			e.log.Info("group skipped", "group", group.Name, "reason", "skip-if", "predicate", group.SkipIf)
 			status = StatusSkipped

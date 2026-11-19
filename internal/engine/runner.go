@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"runtime"
@@ -121,8 +120,7 @@ func (r *ShellRunner) buildCmd(ctx context.Context, g *config.Group, spec config
 	} else {
 		cmd = exec.CommandContext(ctx, spec.Command, spec.Params...) //nolint:gosec // user-declared command
 	}
-	// The declared env (global < group < command) layers over the process env.
-	cmd.Env = mergeEnvs(os.Environ(), config.DeclaredEnv(globalEnv, g.Env, spec.Env))
+	cmd.Env = formatEnviron(overlay(parseEnviron(os.Environ()), config.DeclaredEnv(globalEnv, g.Env, spec.Env)))
 	cmd.Dir = spec.Dir
 	return cmd
 }
@@ -168,24 +166,4 @@ func shellFlag() string {
 		return "/C"
 	}
 	return "-c"
-}
-
-// mergeEnvs converts the base process environment plus zero or more overlay
-// maps into a flat KEY=VALUE slice suitable for *exec.Cmd.Env.
-func mergeEnvs(base []string, overrides ...map[string]string) []string {
-	merged := make(map[string]string, len(base))
-	for _, raw := range base {
-		k, v, ok := strings.Cut(raw, "=")
-		if ok {
-			merged[k] = v
-		}
-	}
-	for _, layer := range overrides {
-		maps.Copy(merged, layer)
-	}
-	final := make([]string, 0, len(merged))
-	for k, v := range merged {
-		final = append(final, fmt.Sprintf("%s=%s", k, v))
-	}
-	return final
 }

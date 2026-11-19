@@ -149,12 +149,24 @@ func TestExpand_Errors(t *testing.T) {
 	}
 }
 
+// TestExpand_EnvOverridesSprigEnv pins that keepup's env() replaces sprig's
+// os.Getenv-backed env(): it reads only Data.Env. The caller (the engine) is
+// responsible for layering the process environment into Data.Env, so the
+// expander itself never touches the OS and stays hermetic.
 func TestExpand_EnvOverridesSprigEnv(t *testing.T) {
-	t.Parallel()
-	// keepup's env() reads the merged config env, not the OS env.
-	got, err := NewExpander().Expand(`{{ env "KEEPUP_ONLY" }}`, Data{Env: map[string]string{"KEEPUP_ONLY": "yes"}})
-	require.NoError(t, err)
-	assert.Equal(t, "yes", got)
+	t.Setenv("KEEPUP_OS_ONLY", "from-os")
+	t.Setenv("KEEPUP_BOTH", "from-os")
+	data := Data{Env: map[string]string{"KEEPUP_BOTH": "from-data"}}
+
+	tests := map[string]string{
+		`{{ env "KEEPUP_BOTH" }}`:    "from-data", // Data.Env wins
+		`{{ env "KEEPUP_OS_ONLY" }}`: "",          // OS is not consulted directly
+	}
+	for in, want := range tests {
+		got, err := NewExpander().Expand(in, data)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "input=%q", in)
+	}
 }
 
 func TestNormalize(t *testing.T) {

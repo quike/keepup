@@ -10,7 +10,6 @@ import (
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/result"
-	"github.com/quike/keepup/internal/template"
 )
 
 // runSeq drives runSequence directly with a scripted runner so each failure
@@ -201,7 +200,7 @@ func TestExpandCommands_CarriesFailurePolicy(t *testing.T) {
 		{Command: "b", Always: true},
 	}}
 
-	got, err := e.expandCommands(g, template.Data{})
+	got, err := e.expandCommands(g, nil)
 	require.NoError(t, err)
 	assert.True(t, got[0].ContinueOnError)
 	assert.True(t, got[1].Always)

@@ -74,13 +74,46 @@ func TestEngine_When_ReferencesEarlierOutput(t *testing.T) {
 	assert.Equal(t, []string{"producer:", "gated:"}, r.calls)
 }
 
+// TestEngine_When_SeesProcessAndGlobalEnv pins that `when:` predicates read
+// process < global env (there is no group or command layer at step level).
+func TestEngine_When_SeesProcessAndGlobalEnv(t *testing.T) {
+	t.Parallel()
+	const when = `{{ eq (env "BRANCH") "main" }}`
+	tests := []struct {
+		name    string
+		process []string
+		global  map[string]string
+		wantRun bool
+	}{
+		{name: "process env is visible", process: []string{"BRANCH=main"}, wantRun: true},
+		{name: "global overrides process", process: []string{"BRANCH=main"}, global: map[string]string{"BRANCH": "dev"}},
+		{name: "global alone", global: map[string]string{"BRANCH": "main"}, wantRun: true},
+		{name: "unset is falsey", wantRun: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := stepFlowWithWhen(when)
+			cfg.Env = tc.global
+			r := &fakeRunner{}
+			e := New(cfg, WithRunner(r), WithProcessEnv(tc.process))
+			require.NoError(t, e.RunFlow(context.Background(), "f"))
+			if tc.wantRun {
+				assert.Equal(t, []string{"a:"}, r.calls)
+			} else {
+				assert.Empty(t, r.calls, "step should have been skipped")
+			}
+		})
+	}
+}
+
 func TestEngine_When_FromFixture(t *testing.T) {
 	t.Parallel()
 	cfg, err := config.LoadConfig("../config/test-resources/config-when.yml")
 	require.NoError(t, err)
 
 	r := &fakeRunner{outputs: map[string]string{"tests": "PASS\n"}}
-	e := New(cfg, WithRunner(r))
+	e := New(cfg, WithRunner(r), WithProcessEnv(nil)) // hermetic: FORCE* must be unset
 	require.NoError(t, e.RunFlow(context.Background(), "ci"))
 
 	// build runs (tests PASS), deploy runs (DEPLOY=true), rollback is skipped
@@ -94,7 +127,7 @@ func TestEngine_When_EdgesFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	r := &fakeRunner{}
-	e := New(cfg, WithRunner(r))
+	e := New(cfg, WithRunner(r), WithProcessEnv(nil)) // hermetic: FORCE* must be unset
 	require.NoError(t, e.RunFlow(context.Background(), "edges"))
 
 	// and/or/not/num all evaluate truthy; e-skip is gated false.

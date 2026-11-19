@@ -32,7 +32,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **Conditionals**         | `when:` skips a step (step mode) or a single dag-mode group (dag mode); skipping a dag group cascades to all its dependents. |
 | **Timeouts & retries**   | Per-step / per-flow `timeout` and `retries` envelope around each command attempt, with backoff.                             |
 | **Safe execution**       | Commands run as real argv by default (no shell injection); opt into a shell per group with `shell:`.                        |
-| **Env layering**         | Global `env:` plus per-group overrides, merged over the process environment.                                                |
+| **Env layering**         | Process env < global `env:` < group `env:` < command `env:`; templates (`{{ env "CI" }}`) see the same layers the command runs with. |
 | **Discoverability**      | `keepup list`, `keepup validate`, and `keepup graph` (Mermaid or Graphviz diagram: step waves, conditional and cacheable groups). `run`/`watch`/`graph` tab-complete flow names, with descriptions, from the config on the command line. |
 | **JSON events**          | `keepup run --events` and `keepup watch --events` emit a newline-delimited JSON stream for CI tooling. `watch` adds a `watch.trigger {"files":[...]}` event before each debounced re-run; the banner writes to stderr so `--events -` yields pure JSON on stdout. |
 | **Migration**            | `keepup migrate` converts legacy v1 configs to v2 and validates the result.                                                 |

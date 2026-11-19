@@ -9,7 +9,8 @@ import (
 )
 
 // Prober evaluates a gating predicate. A nil error means the predicate
-// succeeded (exit code 0); a non-nil error means it failed.
+// succeeded (exit code 0); a non-nil error means it failed. env is the declared
+// (config) env; implementations layer it over the process environment.
 //
 // Predicates are short shell snippets (e.g. "test -f bin/app"), so they always
 // run through a shell.
@@ -32,7 +33,7 @@ type ShellProber struct {
 // error (nil on success).
 func (p ShellProber) Probe(ctx context.Context, script string, env map[string]string) error {
 	cmd := exec.CommandContext(ctx, pickShell(""), shellFlag(), script) //nolint:gosec // user-declared predicate
-	cmd.Env = mergeEnvs(os.Environ(), env)
+	cmd.Env = formatEnviron(overlay(parseEnviron(os.Environ()), env))
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return runInGroup(cmd, p.KillGrace, p.Groups)

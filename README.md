@@ -34,7 +34,7 @@ shell unless you ask for it), and incremental re-runs via content-based caching.
 | **Safe execution**       | Commands run as real argv by default (no shell injection); opt into a shell per group with `shell:`.                        |
 | **Env layering**         | Process env < global `env:` < group `env:` < command `env:`; templates (`{{ env "CI" }}`) see the same layers the command runs with. |
 | **Discoverability**      | `keepup list`, `keepup validate`, and `keepup graph` (Mermaid or Graphviz diagram: step waves, conditional and cacheable groups). `run`/`watch`/`graph` tab-complete flow names, with descriptions, from the config on the command line. |
-| **JSON events**          | `keepup run --events` and `keepup watch --events` emit a newline-delimited JSON stream for CI tooling. `watch` adds a `watch.trigger {"files":[...]}` event before each debounced re-run; the banner writes to stderr so `--events -` yields pure JSON on stdout. |
+| **JSON events**          | `keepup run --events` and `keepup watch --events` emit a newline-delimited JSON stream for CI tooling. `watch` adds a `watch.trigger {"files":[...]}` event before each debounced re-run; with `--events -` stdout carries only events (keepup logs and command output go to stderr). |
 | **Migration**            | `keepup migrate` converts legacy v1 configs to v2 and validates the result.                                                 |
 
 ## Install

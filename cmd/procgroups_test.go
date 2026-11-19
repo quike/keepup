@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"runtime"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestWatchOnChange_RegistersProcessGroupsEveryTick(t *testing.T) {
 	require.NoError(t, err)
 	groups := engine.NewProcessGroups()
 	opts := &runtimeOpts{cfg: cfg, log: logger.Nop(), procGroups: groups}
-	onChange := buildOnChange(nil, opts, "f")
+	onChange := buildOnChange(nil, childOutput{io.Discard, io.Discard}, opts, "f")
 
 	// Two ticks: each builds a fresh engine, and each must be tracked.
 	for range 2 {

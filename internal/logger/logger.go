@@ -4,7 +4,6 @@ package logger
 
 import (
 	"io"
-	"os"
 
 	"github.com/rs/zerolog"
 )
@@ -19,13 +18,10 @@ type Logger interface {
 	Trace(msg string, kv ...any)
 }
 
-// New returns a zerolog-backed Logger writing to stdout.
+// NewWithWriter returns a zerolog-backed Logger writing to w. The CLI passes
+// its stderr: logs are diagnostics and stay off stdout, which carries command
+// output and the --events - stream.
 // level is parsed by zerolog; an empty or invalid value falls back to info.
-func New(level string, pretty bool) Logger {
-	return NewWithWriter(os.Stdout, level, pretty)
-}
-
-// NewWithWriter is like New but writes to the provided writer; intended for tests.
 func NewWithWriter(w io.Writer, level string, pretty bool) Logger {
 	out := w
 	if pretty {

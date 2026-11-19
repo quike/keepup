@@ -33,7 +33,7 @@ func newWatchCmd(opts *runtimeOpts, _ io.Writer) *cobra.Command {
 
 // resolveWatchFlow loads the config and returns the resolved flow name + flow.
 func resolveWatchFlow(cmd *cobra.Command, args []string, opts *runtimeOpts) (string, config.Flow, error) {
-	if err := opts.load(cmd.OutOrStdout()); err != nil {
+	if err := opts.load(cmd.ErrOrStderr()); err != nil {
 		return "", config.Flow{}, err
 	}
 	flowName := opts.cfg.Default
@@ -120,29 +120,24 @@ func runWatch(cmd *cobra.Command, args []string, opts *runtimeOpts, eventsPath s
 	}
 
 	w := watch.New(patterns, setup.src, watch.WithLogger(opts.log))
-	return w.Run(cmd.Context(), buildOnChange(emitter, opts, flowName))
+	return w.Run(cmd.Context(), buildOnChange(emitter, newChildOutput(cmd, eventsPath), opts, flowName))
 }
 
 // buildOnChange returns the per-tick callback the watcher invokes on each
 // debounced batch. When an emitter is configured and the batch was triggered
 // by file changes (len(files) > 0), it emits a watch.trigger event before the
 // flow runs; the initial startup tick passes nil files and emits no trigger.
-// Each tick runs the flow on a fresh engine sharing the one emitter so the
-// event stream is a continuous sequence of per-tick flow envelopes.
-func buildOnChange(emitter engine.Emitter, opts *runtimeOpts, flowName string) func(context.Context, []string) error {
+// Each tick runs the flow on a fresh engine sharing the one emitter and child
+// output, so the event stream is a continuous sequence of per-tick flow
+// envelopes and command output always lands on the same streams.
+func buildOnChange(
+	emitter engine.Emitter, out childOutput, opts *runtimeOpts, flowName string,
+) func(context.Context, []string) error {
 	return func(ctx context.Context, files []string) error {
 		if emitter != nil && len(files) > 0 {
 			emitter.Emit(engine.Event{Event: engine.EventWatchTrigger, Flow: flowName, Files: files})
 		}
-		engineOpts := []engine.Option{
-			engine.WithLogger(opts.log),
-			engine.WithDryRun(opts.dryRun || opts.cfg.Settings.DryRun),
-			engine.WithProcessGroups(opts.procGroups),
-		}
-		if emitter != nil {
-			engineOpts = append(engineOpts, engine.WithEmitter(emitter))
-		}
-		e := engine.New(opts.cfg, engineOpts...)
+		e := engine.New(opts.cfg, opts.engineOptions(out, emitter)...)
 		return e.RunFlow(ctx, flowName)
 	}
 }

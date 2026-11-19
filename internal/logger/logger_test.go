@@ -89,16 +89,6 @@ func TestAllLevelsEmit(t *testing.T) {
 	}
 }
 
-func TestNew_DefaultsToStdoutWithoutPanicking(t *testing.T) {
-	// Just exercise the New() constructor path so it gets covered. We don't
-	// assert on stdout contents to avoid polluting test output.
-	l := New("info", false)
-	assert.NotNil(t, l)
-
-	lp := New("info", true)
-	assert.NotNil(t, lp)
-}
-
 func TestEmit_NonStringKeyIsSkipped(t *testing.T) {
 	var buf bytes.Buffer
 	l := NewWithWriter(&buf, "info", false)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -201,7 +202,7 @@ func TestWatchCmd_EventsWiring(t *testing.T) {
 	// Build the engine opts the same way the command does, then exercise the
 	// REAL production closure (not a copy) so a wiring regression is caught.
 	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
-	onChange := buildOnChange(emitter, opts, "dev")
+	onChange := buildOnChange(emitter, childOutput{io.Discard, io.Discard}, opts, "dev")
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -245,7 +246,7 @@ func TestWatchCmd_InitialRunThenTrigger(t *testing.T) {
 	sw := &syncBuf{}
 	emitter := engine.NewJSONEmitter(sw)
 	opts := &runtimeOpts{cfg: cfg, log: logger.Nop()}
-	onChange := buildOnChange(emitter, opts, "dev")
+	onChange := buildOnChange(emitter, childOutput{io.Discard, io.Discard}, opts, "dev")
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

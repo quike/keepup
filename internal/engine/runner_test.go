@@ -172,6 +172,32 @@ func TestShellFlag(t *testing.T) {
 	assert.NotEmpty(t, shellFlag())
 }
 
+// TestEngine_WithOutputRoutesDefaultRunner proves WithOutput steers the
+// engine-built ShellRunner's live streams, independent of option order.
+func TestEngine_WithOutputRoutesDefaultRunner(t *testing.T) {
+	skipOnWindows(t)
+	t.Parallel()
+	cfg := stepFlowCfg(t, []config.Group{{
+		Name: "a", Command: "printf 'out'; printf 'err' >&2", Shell: "/bin/sh",
+	}}, [][]string{{"a"}})
+	var stdout, stderr bytes.Buffer
+	e := New(cfg, WithOutput(&stdout, &stderr), WithNoCache(true))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	assert.Equal(t, "out", stdout.String())
+	assert.Equal(t, "err", stderr.String())
+}
+
+// TestEngine_WithRunnerWinsOverWithOutput pins that a supplied runner (a test
+// double) is used as-is: WithOutput only configures the default runner.
+func TestEngine_WithRunnerWinsOverWithOutput(t *testing.T) {
+	t.Parallel()
+	cfg := stepFlowCfg(t, []config.Group{{Name: "a", Command: "echo"}}, [][]string{{"a"}})
+	r := &fakeRunner{}
+	e := New(cfg, WithRunner(r), WithOutput(io.Discard, io.Discard))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+	assert.Equal(t, []string{"a:"}, r.calls)
+}
+
 func TestShellRunner_SeparatesStdoutAndStderr(t *testing.T) {
 	skipOnWindows(t)
 	t.Parallel()

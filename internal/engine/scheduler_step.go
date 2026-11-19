@@ -45,9 +45,9 @@ func (e *Engine) runStepPlan(ctx context.Context, p *plan.Plan, flow *config.Flo
 				return fmt.Errorf("step %d: when: %w", waveIdx+1, err)
 			}
 			if !run {
-				e.log.Info("step skipped", "step", waveIdx+1, "reason", "when", "predicate", step.When)
+				e.log.Info("step skipped", "step", waveIdx+1, "reason", skipReasonWhen, "predicate", step.When)
 				for _, name := range step.Run {
-					e.outputs.Set(name, result.RunResult{Status: result.StatusSkipped})
+					e.skipGroup(name, skipReasonWhen)
 				}
 				continue
 			}

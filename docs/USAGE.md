@@ -137,7 +137,7 @@ watch set.
 keepup watch ci --events -
 ```
 
-The "watching N dir(s)…" banner writes to **stderr**, so stdout carries pure JSON. Each re-run emits a full `flow.start` / `group.*` / `flow.end` envelope, and every debounced batch of file changes emits a `watch.trigger` event listing the changed files:
+With `--events -`, stdout carries only JSON: the "watching N dir(s)…" banner, keepup's logs, and the commands' own output all go to **stderr** (see [Output streams](CONFIG.md#output-streams)). Each re-run emits a full `flow.start` / `group.*` / `flow.end` envelope, and every debounced batch of file changes emits a `watch.trigger` event listing the changed files:
 
 ```
 {"event":"flow.start","flow":"ci","mode":"step"}

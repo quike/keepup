@@ -24,7 +24,7 @@ func newGraphCmd(opts *runtimeOpts, stdout io.Writer) *cobra.Command {
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeFlows(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.load(cmd.OutOrStdout()); err != nil {
+			if err := opts.load(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			flowName := opts.cfg.Default

@@ -172,3 +172,34 @@ func TestEvent_FilesOmitEmpty(t *testing.T) {
 	assert.NotContains(t, string(b), `"files"`,
 		"flow.start (and every other non-watch event) must omit files from JSON")
 }
+
+// TestJSONEmitter_StepWhenSkipEmitsGroupEnd pins step/dag parity: a step whose
+// when: renders falsey closes each of its groups with group.end
+// {status:skipped, reason:when}, exactly as a dag when:-skip does.
+func TestJSONEmitter_StepWhenSkipEmitsGroupEnd(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{
+		Version: config.SchemaVersion,
+		Groups: []config.Group{
+			{Name: "a", Command: "echo"},
+			{Name: "b", Command: "echo"},
+			{Name: "c", Command: "echo"},
+		},
+		Flows: map[string]config.Flow{
+			"f": {Mode: config.ModeStep, Steps: []config.Step{
+				{Run: []string{"a", "b"}, When: "false"},
+				{Run: []string{"c"}},
+			}},
+		},
+	}
+	var buf bytes.Buffer
+	e := New(cfg, WithRunner(&fakeRunner{}), WithEmitter(NewJSONEmitter(&buf)))
+	require.NoError(t, e.RunFlow(context.Background(), "f"))
+
+	evs := decodeEvents(t, buf.Bytes())
+	for _, g := range []string{"a", "b"} {
+		assert.Equal(t, StatusSkipped, statusOf(evs, g), "group %s", g)
+		assert.Equal(t, "when", reasonOf(evs, g), "group %s", g)
+	}
+	assert.Equal(t, StatusOK, statusOf(evs, "c"))
+}

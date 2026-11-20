@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // SchemaVersion is the only schema version this binary understands.
@@ -215,7 +215,7 @@ func (r *RunEntry) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf("run entry: missing 'group'")
 		}
 		return nil
-	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+	case yaml.StreamNode, yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
 		return fmt.Errorf("run entry: must be a group name or a {group, when, after} map")
 	}
 	return fmt.Errorf("run entry: must be a group name or a {group, when, after} map")
@@ -307,7 +307,7 @@ func (cs *CommandSpec) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf(`commands entry: missing or empty "command"`)
 		}
 		return nil
-	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+	case yaml.StreamNode, yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
 		return fmt.Errorf("commands entry: must be a string or a {command, params} map")
 	}
 	return fmt.Errorf("commands entry: must be a string or a {command, params} map")

@@ -7,83 +7,87 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestHumanizeDecodeError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		in   []string
-		want []string
+		in   []*yaml.LoadError
+		want []*yaml.LoadError
 	}{
 		{
 			name: "top level",
-			in:   []string{"line 9: field defaults not found in type config.Config"},
-			want: []string{`line 9: unknown key "defaults" at top level`},
+			in:   []*yaml.LoadError{loadErr(9, "field defaults not found in type config.Config")},
+			want: []*yaml.LoadError{loadErr(9, `unknown key "defaults" at top level`)},
 		},
 		{
 			name: "settings",
-			in:   []string{"line 7: field max_concurrency not found in type config.Settings"},
-			want: []string{`line 7: unknown key "max_concurrency" in settings`},
+			in:   []*yaml.LoadError{loadErr(7, "field max_concurrency not found in type config.Settings")},
+			want: []*yaml.LoadError{loadErr(7, `unknown key "max_concurrency" in settings`)},
 		},
 		{
 			name: "logging",
-			in:   []string{"line 4: field levl not found in type config.Logging"},
-			want: []string{`line 4: unknown key "levl" in logging`},
+			in:   []*yaml.LoadError{loadErr(4, "field levl not found in type config.Logging")},
+			want: []*yaml.LoadError{loadErr(4, `unknown key "levl" in logging`)},
 		},
 		{
 			name: "group",
-			in:   []string{"line 9: field skipif not found in type config.Group"},
-			want: []string{`line 9: unknown key "skipif" in group`},
+			in:   []*yaml.LoadError{loadErr(9, "field skipif not found in type config.Group")},
+			want: []*yaml.LoadError{loadErr(9, `unknown key "skipif" in group`)},
 		},
 		{
 			name: "cache",
-			in:   []string{"line 11: field write not found in type config.Cache"},
-			want: []string{`line 11: unknown key "write" in cache`},
+			in:   []*yaml.LoadError{loadErr(11, "field write not found in type config.Cache")},
+			want: []*yaml.LoadError{loadErr(11, `unknown key "write" in cache`)},
 		},
 		{
 			name: "flow",
-			in:   []string{"line 11: field retry not found in type config.Flow"},
-			want: []string{`line 11: unknown key "retry" in flow`},
+			in:   []*yaml.LoadError{loadErr(11, "field retry not found in type config.Flow")},
+			want: []*yaml.LoadError{loadErr(11, `unknown key "retry" in flow`)},
 		},
 		{
 			name: "step",
-			in:   []string{"line 13: field timout not found in type config.Step"},
-			want: []string{`line 13: unknown key "timout" in step`},
+			in:   []*yaml.LoadError{loadErr(13, "field timout not found in type config.Step")},
+			want: []*yaml.LoadError{loadErr(13, `unknown key "timout" in step`)},
 		},
 		{
 			name: "multiple errors are each translated",
-			in: []string{
-				"line 2: field a not found in type config.Group",
-				"line 5: field b not found in type config.Flow",
+			in: []*yaml.LoadError{
+				loadErr(2, "field a not found in type config.Group"),
+				loadErr(5, "field b not found in type config.Flow"),
 			},
-			want: []string{
-				`line 2: unknown key "a" in group`,
-				`line 5: unknown key "b" in flow`,
+			want: []*yaml.LoadError{
+				loadErr(2, `unknown key "a" in group`),
+				loadErr(5, `unknown key "b" in flow`),
 			},
 		},
 		{
 			name: "non-matching entries pass through unchanged",
-			in: []string{
-				"line 3: cannot unmarshal !!str `x` into int",
-				"line 4: field z not found in type other.Thing",
+			in: []*yaml.LoadError{
+				loadErr(3, "cannot unmarshal !!str `x` into int"),
+				loadErr(4, "field z not found in type other.Thing"),
 			},
-			want: []string{
-				"line 3: cannot unmarshal !!str `x` into int",
-				"line 4: field z not found in type other.Thing",
+			want: []*yaml.LoadError{
+				loadErr(3, "cannot unmarshal !!str `x` into int"),
+				loadErr(4, "field z not found in type other.Thing"),
 			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := humanizeDecodeError(&yaml.TypeError{Errors: tc.in})
-			var te *yaml.TypeError
-			require.True(t, errors.As(err, &te))
-			assert.Equal(t, tc.want, te.Errors)
+			err := humanizeDecodeError(&yaml.LoadErrors{Errors: tc.in})
+			var le *yaml.LoadErrors
+			require.True(t, errors.As(err, &le))
+			assert.Equal(t, tc.want, le.Errors)
 		})
 	}
+}
+
+func loadErr(line int, msg string) *yaml.LoadError {
+	return &yaml.LoadError{Stage: yaml.ConstructorStage, Message: msg, Mark: yaml.Mark{Line: line}}
 }
 
 // TestSchemaLocations_CoversEveryStrictStruct enforces the rule documented on

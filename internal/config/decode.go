@@ -7,7 +7,7 @@ import (
 	"io"
 	"regexp"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // decodeStrict decodes the first YAML document in data into out, rejecting
@@ -29,38 +29,40 @@ func decodeStrict(data []byte, out any) error {
 	return nil
 }
 
-// unknownFieldRE matches the yaml library's unknown-key report, e.g.
-// "line 9: field skipif not found in type config.Group".
-var unknownFieldRE = regexp.MustCompile(`^line (\d+): field (.+) not found in type (\S+)$`)
+// unknownFieldRE matches the yaml library's unknown-key message, e.g.
+// "field skipif not found in type config.Group".
+var unknownFieldRE = regexp.MustCompile(`^field (.+) not found in type (\S+)$`)
 
-// humanizeDecodeError rewrites unknown-key entries of a *yaml.TypeError so
+// humanizeDecodeError rewrites unknown-key entries of a *yaml.LoadErrors so
 // they name the key and its place in the schema instead of a Go type:
 // `line 9: unknown key "skipif" in group`. Every other entry, and every other
 // error, passes through unchanged.
 func humanizeDecodeError(err error) error {
-	var te *yaml.TypeError
-	if !errors.As(err, &te) {
+	var le *yaml.LoadErrors
+	if !errors.As(err, &le) {
 		return err
 	}
-	out := make([]string, len(te.Errors))
-	for i, msg := range te.Errors {
-		out[i] = humanizeUnknownField(msg)
+	out := make([]*yaml.LoadError, len(le.Errors))
+	for i, e := range le.Errors {
+		out[i] = humanizeUnknownField(e)
 	}
-	return &yaml.TypeError{Errors: out}
+	return &yaml.LoadErrors{Errors: out}
 }
 
-func humanizeUnknownField(msg string) string {
-	m := unknownFieldRE.FindStringSubmatch(msg)
+func humanizeUnknownField(e *yaml.LoadError) *yaml.LoadError {
+	m := unknownFieldRE.FindStringSubmatch(e.Message)
 	if m == nil {
-		return msg
+		return e
 	}
-	line, key, typeName := m[1], m[2], m[3]
+	key, typeName := m[1], m[2]
 	for t, where := range schemaLocations {
 		if t.String() == typeName {
-			return fmt.Sprintf("line %s: unknown key %q %s", line, key, where)
+			out := *e
+			out.Message = fmt.Sprintf("unknown key %q %s", key, where)
+			return &out
 		}
 	}
-	return msg
+	return e
 }
 
 // checkDeclaredVersion leniently reads only the top-level version: and

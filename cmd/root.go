@@ -14,7 +14,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/quike/keepup/internal/config"
 	"github.com/quike/keepup/internal/configfile"
